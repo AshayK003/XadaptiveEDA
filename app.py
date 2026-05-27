@@ -24,11 +24,12 @@ _load_env()
 from data_processor import DataProcessor
 from recommendation_engine import RecommendationEngine
 from preference_learner import PreferenceTracker
-from insight_generator import explain_recommendation, explain_user_preferences
+from insight_generator import explain_recommendation, explain_user_preferences, compare_recommendations, global_explanation_summary
 from visualization_generator import VisualizationGenerator
-from constants import DEFAULT_PREFERENCES
+from constants import DEFAULT_PREFERENCES, ANALYSIS_GOALS
 from data_quality import QualityReport
 import llm_adapter
+from nlq_engine import match_query, format_result
 
 # Page configuration
 st.set_page_config(
@@ -77,6 +78,15 @@ if 'df' not in st.session_state:
 if 'quality_report' not in st.session_state:
     st.session_state.quality_report = None
 
+if '_active_goal' not in st.session_state:
+    st.session_state._active_goal = None
+
+if '_expert_mode' not in st.session_state:
+    st.session_state._expert_mode = False
+
+if '_nlq_match' not in st.session_state:
+    st.session_state._nlq_match = None
+
 # Initialize components
 data_processor = DataProcessor()
 recommendation_engine = RecommendationEngine()
@@ -100,18 +110,65 @@ with st.sidebar:
             st.warning("Large file (>50 MB) — processing may be slow or fail.")
     
     st.header("Your Priorities")
+    
+    # Analysis goals
+    st.markdown("#### Analysis Goal")
+    goal_options = [None] + list(ANALYSIS_GOALS.keys())
+    goal_labels = ["None (custom)"] + list(ANALYSIS_GOALS.keys())
+    current_goal_idx = goal_options.index(st.session_state.get('_active_goal')) if st.session_state.get('_active_goal') in goal_options else 0
+    selected_goal = st.radio(
+        "Focus",
+        options=goal_options,
+        format_func=lambda x: goal_labels[goal_options.index(x)] if x in goal_options else "None (custom)",
+        index=current_goal_idx,
+        key="_goal_radio"
+    )
+    if selected_goal != st.session_state.get('_active_goal'):
+        st.session_state._active_goal = selected_goal
+        if selected_goal:
+            preference_learner.set_goal(selected_goal)
+        else:
+            preference_learner.set_goal(None)
+        st.session_state.user_preferences = preference_learner.preference_weights
+        if st.session_state.data_profile is not None:
+            st.session_state.recommendations = recommendation_engine.generate_recommendations(
+                st.session_state.data_profile, st.session_state.user_preferences,
+                quality_score=getattr(st.session_state.quality_report, 'overall_quality_score', None) if st.session_state.get('_finalized') else None
+            )
+        st.rerun()
+    
+    # Save / Load / Decay
+    col_s, col_l = st.columns(2)
+    with col_s:
+        if st.button("Save Preferences"):
+            preference_learner.save_preferences()
+            st.toast("Saved to ~/.eda_assistant_prefs.json", icon="💾")
+    with col_l:
+        if st.button("Load Preferences"):
+            ok = preference_learner.load_preferences()
+            if ok:
+                st.session_state.user_preferences = preference_learner.preference_weights
+                st.rerun()
+            else:
+                st.toast("No saved preferences found", icon="❌")
+    if st.button("Apply Time Decay"):
+        preference_learner.apply_temporal_decay()
+        st.session_state.user_preferences = preference_learner.preference_weights
+        st.toast("Decay applied — older interactions lose influence", icon="⏳")
+    
+    st.markdown("#### Priority Levels")
     if st.session_state.user_preferences:
         prefs = st.session_state.user_preferences
         pref_df = pd.DataFrame([
-            {'type': k.replace('_', ' ').title(), 'score': v, 'default': v == 0.5}
+            {'type': k.replace('_', ' ').title(), 'score': v}
             for k, v in prefs.items()
         ]).sort_values('score', ascending=True)
 
         fig = px.bar(
             pref_df, x='score', y='type', orientation='h',
             text='score', range_x=[0, 1.1],
-            color='default', color_discrete_map={True: '#e0e0e0', False: '#1f77b4'},
-            height=220
+            color_discrete_sequence=['#1f77b4'],
+            height=200
         )
         fig.update_traces(texttemplate='%{text:.1f}', textposition='outside')
         fig.update_layout(
@@ -120,40 +177,29 @@ with st.sidebar:
         )
         st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
 
-        st.markdown("#### Current Priority Levels")
-        st.write(explain_user_preferences(prefs))
-        
-        st.markdown("#### Set Priorities")
-        st.write("Adjust how much each analysis type is weighted in recommendations:")
-        
-        # Create a form for preference adjustments
-        with st.form(key="preference_form"):
-            new_preferences = {}
-            for analysis_type, current_value in st.session_state.user_preferences.items():
-                # Create a more user-friendly label
-                friendly_name = analysis_type.replace('_', ' ').title()
-                new_preferences[analysis_type] = st.slider(
-                    f"{friendly_name}",
-                    min_value=0.1,
-                    max_value=1.0,
-                    value=float(current_value),
-                    step=0.1,
-                    format="%.1f"
-                )
-            
-            # Submit button for the form
-            submit_button = st.form_submit_button(label="Update Preferences")
-            
-            if submit_button:
-                st.session_state.user_preferences = preference_learner.set_preferences(new_preferences)
-
-                if st.session_state.data_profile is not None:
-                    st.session_state.recommendations = recommendation_engine.generate_recommendations(
-                        st.session_state.data_profile,
-                        st.session_state.user_preferences
+        with st.expander("Adjust Priorities", expanded=False):
+            st.write("Set how much each analysis type is weighted in recommendations:")
+            with st.form(key="preference_form"):
+                new_preferences = {}
+                for analysis_type, current_value in st.session_state.user_preferences.items():
+                    friendly_name = analysis_type.replace('_', ' ').title()
+                    new_preferences[analysis_type] = st.slider(
+                        f"{friendly_name}",
+                        min_value=0.1,
+                        max_value=1.0,
+                        value=float(current_value),
+                        step=0.1,
+                        format="%.1f"
                     )
-
-                st.toast("Preferences updated — recommendations reordered.", icon="✅")
+                submit_button = st.form_submit_button(label="Update Preferences")
+                if submit_button:
+                    st.session_state.user_preferences = preference_learner.set_preferences(new_preferences)
+                    if st.session_state.data_profile is not None:
+                        st.session_state.recommendations = recommendation_engine.generate_recommendations(
+                            st.session_state.data_profile,
+                            st.session_state.user_preferences
+                        )
+                    st.toast("Preferences updated — recommendations reordered.", icon="✅")
     
     # Reset preferences button
     if st.button("Reset Preferences"):
@@ -163,6 +209,8 @@ with st.sidebar:
         st.toast("Preferences reset to defaults.", icon="🔄")
     
     st.header("AI Analysis")
+    st.session_state._expert_mode = st.toggle("Expert Mode", value=st.session_state.get('_expert_mode', False), help="Show raw data, JSON details, and download options")
+    
     has_api_key = any(os.environ.get(k) for k in ["OPENROUTER_API_KEY", "GROQ_API_KEY"])
     default_ai_enabled = has_api_key or bool(os.environ.get("LLM_PROVIDER"))
     st.session_state.ai_enabled = st.toggle(
@@ -274,9 +322,16 @@ if uploaded_file is not None:
 
     # Unnamed column renaming
     unnamed_cols = [c for c in df.columns if str(c).lower().startswith("unnamed")]
-    if unnamed_cols:
+    if unnamed_cols and '_cols_renamed' not in st.session_state:
         st.subheader("Unnamed Columns Detected")
         st.write(f"Found {len(unnamed_cols)} column(s) without names.")
+        
+        # Data preview toggle for unnamed columns
+        show_preview = st.checkbox("Preview unnamed column data", key="_preview_unnamed")
+        if show_preview:
+            preview_cols = unnamed_cols + [c for c in df.columns if c not in unnamed_cols][:3]
+            st.dataframe(df[preview_cols].head(5), use_container_width=True)
+        
         if st.session_state.get('ai_enabled') and '_column_names' not in st.session_state:
             with st.spinner("Suggesting column names from data..."):
                 provider = st.session_state.get('_ai_provider', 'local')
@@ -308,12 +363,71 @@ if uploaded_file is not None:
             if st.button("Apply Column Renames"):
                 df.rename(columns=rename_map, inplace=True)
                 st.session_state.df = df
-                st.session_state.data_profile = data_processor.profile_dataset(df)
-                st.session_state._cardinality = {col: df[col].nunique() for col in df.columns}
-                st.session_state.recommendations = recommendation_engine.generate_recommendations(
-                    st.session_state.data_profile, st.session_state.user_preferences
-                )
+                st.session_state._cols_renamed = True
                 st.rerun()
+    elif not unnamed_cols and '_cols_renamed' not in st.session_state:
+        st.session_state._cols_renamed = True
+        st.rerun()
+
+    # Drop first N rows (after column rename, before finalize)
+    if '_cols_renamed' in st.session_state and '_rows_dropped' not in st.session_state and '_finalized' not in st.session_state:
+        with st.expander("Data Preview", expanded=True):
+            st.dataframe(df.head(10), use_container_width=True)
+        drop_rows = st.number_input("Drop first N rows (optional)", min_value=0, max_value=len(df)-1, value=0, step=1, key="_drop_rows")
+        if drop_rows > 0:
+            if st.button(f"Remove first {drop_rows} row(s)"):
+                df.drop(index=df.index[:drop_rows], inplace=True)
+                df.reset_index(drop=True, inplace=True)
+                st.session_state.df = df
+                st.session_state._rows_dropped = drop_rows
+                st.rerun()
+
+    # Finalize: update all analytics and clear AI cache
+    if '_cols_renamed' in st.session_state and '_finalized' not in st.session_state:
+        with st.expander("Final Data Preview (pre-finalize)", expanded=True):
+            st.dataframe(df.head(10), use_container_width=True)
+        if st.button("Finalize Dataset — Generate Full Analysis"):
+            st.session_state.df = df
+            st.session_state.data_profile = data_processor.profile_dataset(df)
+            st.session_state._cardinality = {col: df[col].nunique() for col in df.columns}
+            st.session_state.quality_report = data_processor.cleanse(df, skip_name_normalization=True)[1]
+            st.session_state.recommendations = recommendation_engine.generate_recommendations(
+                st.session_state.data_profile, st.session_state.user_preferences,
+                quality_score=st.session_state.quality_report.overall_quality_score
+            )
+            for k in list(st.session_state.keys()):
+                if k.startswith('_ai_'):
+                    del st.session_state[k]
+            st.session_state._finalized = True
+            st.rerun()
+
+    if '_finalized' in st.session_state:
+        dropped = st.session_state.get('_rows_dropped', 0)
+        parts = []
+        if '_cols_renamed' in st.session_state:
+            parts.append("Columns renamed")
+        if dropped:
+            parts.append(f"Dropped {dropped} row(s)")
+        if parts:
+            st.caption(" | ".join(parts))
+        st.divider()
+        
+        # ── NLQ Bar ────────────────────────────────────────────
+        nlq_query = st.text_input("🔍 Ask about your data (e.g., 'show me outliers')", key="_nlq_input")
+        if nlq_query:
+            match, conf = match_query(nlq_query)
+            st.session_state._nlq_match = format_result(match, conf)
+            if match:
+                st.info(f"**Try:** {st.session_state._nlq_match['title']} (confidence: {conf:.0%})")
+        
+        # ── Global Exploration Summary ─────────────────────────
+        if st.session_state.interaction_history:
+            with st.expander("Exploration Summary", expanded=False):
+                st.markdown(global_explanation_summary(
+                    data_profile, quality_report,
+                    st.session_state.interaction_history,
+                    st.session_state.user_preferences
+                ))
     
     # ── Quality warnings ─────────────────────────────────────
     if quality_report.warnings:
@@ -323,6 +437,11 @@ if uploaded_file is not None:
             with st.expander(f"+{len(quality_report.warnings) - 5} more warnings"):
                 for w in quality_report.warnings[5:]:
                     st.warning(w)
+
+    # Only show full analysis after finalization
+    if '_finalized' not in st.session_state:
+        st.info("Complete the steps above and click **Finalize Dataset** to see analysis.")
+        st.stop()
 
     # Display data overview
     st.subheader("Data Overview")
@@ -407,9 +526,28 @@ if uploaded_file is not None:
         st.info("No applicable analyses found for this dataset. Upload a different file.")
         st.stop()
     
+    # Expert mode: raw data view
+    if st.session_state.get('_expert_mode'):
+        with st.expander("Raw DataFrame", expanded=False):
+            st.dataframe(df, use_container_width=True)
+            csv = df.to_csv(index=False).encode('utf-8')
+            st.download_button("Download CSV", data=csv, file_name="clean_data.csv", mime="text/csv")
+        with st.expander("Full Recommendation JSON", expanded=False):
+            st.json(recommendations)
+    
     for i, rec in enumerate(recommendations[:5]):  # Show top 5 recommendations
         with st.expander(f"📋 {rec['title']} (Relevance: {rec['score']:.2f})", expanded=i==0):
             st.write(rec['description'])
+            
+            # Column interestingness badges
+            if rec['columns']:
+                st.caption("Columns (sorted by interestingness): " + ", ".join(rec['columns']))
+            
+            # Comparative explanation with #2
+            if i == 0 and len(recommendations) > 1:
+                show_compare = st.checkbox("Compare with #2", key=f"compare_{rec['type']}_{i}")
+                if show_compare:
+                    st.markdown(compare_recommendations(rec, recommendations[1]))
             
             show_explanation = st.checkbox(
                 "Show explanation",
@@ -418,14 +556,53 @@ if uploaded_file is not None:
 
             if show_explanation:
                 st.markdown("---")
-                exp = explain_recommendation(rec, data_profile, st.session_state.user_preferences)
+                exp = explain_recommendation(rec, data_profile, st.session_state.user_preferences, quality_report)
                 for reason in exp['reasons']:
                     st.write(f"• {reason}")
                 if exp['technique_reasons']:
                     st.write("**Charts used:**")
                     for t in exp['technique_reasons']:
                         st.write(f"• {t}")
+                
+                # Counterfactual slider
                 st.markdown("---")
+                st.caption("**What if?** Adjust this type's priority below to see how the ranking would change:")
+                cf_value = st.slider(
+                    f"Priority for {rec['type'].replace('_', ' ').title()}",
+                    min_value=0.1, max_value=1.0, value=float(rec.get('pref_score', 0.5)),
+                    step=0.1, key=f"cf_{rec['type']}_{i}"
+                )
+                if cf_value != rec.get('pref_score', 0.5):
+                    old_pref = rec.get('pref_score', 0.5)
+                    scale = cf_value / old_pref if old_pref > 0 else 1.0
+                    st.write("**Would-be ranking:**")
+                    for j, cr in enumerate(recommendations[:5]):
+                        if cr['type'] == rec['type']:
+                            new_score = cr['score'] * scale
+                        else:
+                            new_score = cr['score']
+                        arrow = "⬆" if new_score > cr.get('score', 0) else "⬇" if new_score < cr.get('score', 0) else ""
+                        st.write(f"{j+1}. {cr['title']}: {new_score:.2f} {arrow}")
+                
+                st.markdown("---")
+                st.markdown("---")
+                preference_learner.track_interaction(rec, 'explored', pd.Timestamp.now(), {"event": "show_explanation"})
+                st.session_state.user_preferences = preference_learner.preference_weights
+            
+            # Expert mode: show full recommendation detail
+            if st.session_state.get('_expert_mode'):
+                st.caption("**Technical Details:**")
+                st.json({
+                    'type': rec['type'],
+                    'base_score': rec.get('base_score'),
+                    'pref_score': rec.get('pref_score'),
+                    'data_relevance': rec.get('data_relevance'),
+                    'quality_adjustment': rec.get('quality_adjustment'),
+                    'diversity_penalty': rec.get('diversity_penalty'),
+                    'data_factors': rec.get('data_factors'),
+                    'columns': rec.get('columns'),
+                    'final_score': rec.get('score')
+                })
             
             # Visualization based on recommendation type
             selected_cols = []
@@ -486,9 +663,13 @@ if uploaded_file is not None:
                             kwargs['plot_type'] = selected_viz_type
                             
                         fig = visualization_generator.generate_visualization(
-                            rec['type'], df, selected_cols, **kwargs
+                            rec['type'], df, selected_cols, quality_report=quality_report, **kwargs
                         )
-                        viz_placeholder.plotly_chart(fig, use_container_width=True)
+                        event = viz_placeholder.plotly_chart(fig, use_container_width=True, on_select="rerun", key=f"viz_{rec['type']}_{i}")
+                        if event and event.selection and event.selection.points:
+                            st.caption(f"Selected: {event.selection.points[0]}")
+                        preference_learner.track_interaction(rec, 'column_selected', pd.Timestamp.now(), {"columns": selected_cols, "viz_type": selected_viz_type})
+                        st.session_state.user_preferences = preference_learner.preference_weights
                     except Exception as e:
                         viz_placeholder.error(f"Error generating visualization: {str(e)}")
             
@@ -540,7 +721,8 @@ if uploaded_file is not None:
                     st.session_state.user_preferences = preference_learner.preference_weights
                     st.session_state.recommendations = recommendation_engine.generate_recommendations(
                         data_profile,
-                        st.session_state.user_preferences
+                        st.session_state.user_preferences,
+                        quality_score=st.session_state.quality_report.overall_quality_score
                     )
                     st.toast("Thanks! Prioritizing similar analyses.", icon="👍")
                     
@@ -550,7 +732,8 @@ if uploaded_file is not None:
                     st.session_state.user_preferences = preference_learner.preference_weights
                     st.session_state.recommendations = recommendation_engine.generate_recommendations(
                         data_profile,
-                        st.session_state.user_preferences
+                        st.session_state.user_preferences,
+                        quality_score=st.session_state.quality_report.overall_quality_score
                     )
                     st.toast("Noted. Showing fewer analyses like this.", icon="👎")
     

@@ -6,7 +6,7 @@ from plotly.subplots import make_subplots
 
 
 class VisualizationGenerator:
-    def generate_visualization(self, analysis_type, df, columns, **kwargs):
+    def generate_visualization(self, analysis_type, df, columns, quality_report=None, **kwargs):
         dispatch = {
             'distribution': self._create_distribution_plot,
             'correlation': self._create_correlation_plot,
@@ -17,13 +17,37 @@ class VisualizationGenerator:
         }
         handler = dispatch.get(analysis_type)
         if handler:
-            return handler(df, columns, **kwargs)
+            fig = handler(df, columns, **kwargs)
+            self._annotate_quality_warnings(fig, columns, quality_report)
+            return fig
         fig = go.Figure()
         fig.add_annotation(
             text=f"Visualization for {analysis_type} not implemented",
             xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False
         )
         return fig
+
+    def _annotate_quality_warnings(self, fig, columns, quality_report):
+        """Add annotation to figure if any selected columns have quality issues."""
+        if quality_report is None or not columns:
+            return
+        warnings = []
+        for col in columns:
+            if col in quality_report.sparse_columns:
+                warnings.append(f"'{col}' is sparse ({quality_report.null_percentages.get(col, 0):.0f}% missing)")
+            if col in quality_report.constant_columns:
+                warnings.append(f"'{col}' is constant (single value)")
+            if col in quality_report.mixed_type_columns:
+                warnings.append(f"'{col}' has mixed data types")
+        if warnings:
+            fig.add_annotation(
+                text="[Quality warning] " + "; ".join(warnings),
+                xref="paper", yref="paper", x=0.5, y=-0.15,
+                showarrow=False, font=dict(color="orange", size=11),
+                bgcolor="rgba(255,255,255,0.8)"
+            )
+            # Make room for the annotation
+            fig.update_layout(margin=dict(b=60))
 
     def _create_distribution_plot(self, df, columns, **kwargs):
         if not columns:

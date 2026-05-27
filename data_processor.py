@@ -33,9 +33,9 @@ class DataProcessor:
         else:
             raise ValueError(f"Unsupported file format: {file_extension}")
 
-    def cleanse(self, df: pd.DataFrame) -> tuple[pd.DataFrame, QualityReport]:
+    def cleanse(self, df: pd.DataFrame, skip_name_normalization: bool = False) -> tuple[pd.DataFrame, QualityReport]:
         """Normalize, validate, and report on data quality. Returns (cleaned_df, report)."""
-        return _cleanse(df)
+        return _cleanse(df, skip_name_normalization=skip_name_normalization)
 
     def profile_dataset(self, df):
         """Extract key dataset characteristics"""

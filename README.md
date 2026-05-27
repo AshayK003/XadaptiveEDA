@@ -1,6 +1,6 @@
 # EDA Assistant
 
-A Streamlit application that profiles datasets, scores six analysis types by relevance, and generates plotly visualizations. Analysis rankings incorporate both dataset characteristics and user-set priority weights.
+A Streamlit application that profiles datasets, scores six analysis types by data relevance × user priority, and generates plotly visualizations. Features a guided workflow (upload → rename → clean → finalize → analyze), AI-powered insights, preference tracking, data quality pipeline, and natural-language querying.
 
 ## Quick Start
 
@@ -15,29 +15,35 @@ Open http://localhost:8501.
 
 ## How It Works
 
-### Data Flow
+### Workflow
 
 ```
-Upload file → load_data() → raw df
+Upload file → cleanse() → renamed/cleaned df
                                 ↓
-                        cleanse() → cleaned df + QualityReport
+                      Profile dataset → profile dict
                                 ↓
-                    profile_dataset() → profile dict
-                                            ↓
-        User priorities ──→ generate_recommendations() → ranked list
-                                 ↓
-              User selects analysis → VisualizationGenerator → plotly figure
-                                 ↓
-              User clicks 👍/👎 → PreferenceTracker → weights adjusted
+          User priorities → generate_recommendations() → ranked list
+                                ↓
+          User selects analysis → VisualizationGenerator → plotly figure
+                                ↓
+          User clicks 👍/👎 → PreferenceTracker → weights adjusted
 ```
+
+The app introduces a **3-step pre-analysis pipeline**:
+1. **Rename unnamed columns** — AI-suggested naming or manual entry
+2. **Drop first N rows** — optional data cleanup
+3. **Finalize** — triggers full profiling, quality report, and recommendation generation
 
 ### Scoring Formula
 
-Each analysis type gets a score: `base_score × data_relevance × user_priority`
+Each analysis type gets:  
+`base_score × data_relevance × user_preference_score × quality_adjustment [× diversity_penalty]`
 
-- **base_score**: fixed per type (0.6–0.9), reflects general usefulness
-- **data_relevance**: computed from actual dataset characteristics (0.5–1.0)
-- **user_priority**: slider value or feedback-adjusted weight (0.1–1.0)
+- **base_score**: fixed per type (0.6–0.9)
+- **data_relevance**: computed from dataset characteristics (0.5–1.0)
+- **user_preference_score**: slider value or feedback-adjusted weight (0.1–1.0)
+- **quality_adjustment**: 0.5 + 0.5 × quality_score
+- **diversity_penalty**: 0.85 if same-category duplicate, else 1.0
 
 Results sorted descending, top 5 displayed.
 
@@ -73,12 +79,12 @@ Results sorted descending, top 5 displayed.
 
 ## Data Quality Pipeline
 
-Every uploaded file passes through a preprocessing pipeline that normalizes, validates, and reports on data quality before profiling and analysis.
+Every uploaded file passes through a preprocessing pipeline that normalizes, validates, and reports on data quality.
 
-### Pipeline Steps
+### Pipeline Steps (order-sensitive)
 
 | Step | Operation |
-|------|-----------|
+|---|---|
 | Missing token normalization | `"NA", "N/A", "NULL", "", "-", "?", "#N/A"` → `NaN` |
 | Duplicate column renaming | `col, col_1, col_2` suffixes |
 | Column name normalization | lowercase, spaces→underscores, special chars sanitized |
@@ -87,7 +93,7 @@ Every uploaded file passes through a preprocessing pipeline that normalizes, val
 | Empty row removal | Drop all-null rows |
 | Sparse column detection | Columns >50% missing flagged |
 | Constant column detection | Columns with ≤1 unique value flagged |
-| Mixed-type detection | Object columns with multiple Python types flagged |
+| Mixed-type detection | Object/string columns with multiple Python types flagged |
 | Type inference | Numeric cast at 90% confidence; datetime on name hints |
 
 ### QualityReport
@@ -101,51 +107,72 @@ class QualityReport:
     duplicate_rows: int
     null_percentages: dict[str, float]
     memory_usage_mb: float
-    overall_quality_score: float      # 0–1 composite (see weights below)
+    overall_quality_score: float      # 0–1 composite
     warnings: list[str]
+    num_cols_after_cleanse: int
+    row_count_after_cleanse: int
+    rows_removed_fully_empty: int
+    cols_removed_fully_empty: int
     sparse_columns: list[str]
     constant_columns: list[str]
     mixed_type_columns: list[str]
+    duplicate_columns_renamed: list[tuple[str, str]]
 ```
 
 Quality score weights: completeness (0.3), uniqueness (0.2), no duplicates (0.15), no sparse (0.15), no constant (0.10), no mixed-types (0.10).
 
-### UI Feedback
-
-Warning banners appear above the data overview for:
-- Sparse columns (>50% missing)
-- Constant columns (single value)
-- Mixed data types
-- Duplicate rows
-- Large memory usage
-
-A "Data Quality Report" expander shows the full quality score, metrics, and detailed diagnostics.
-
 ## Priority Tracking
 
-**`PreferenceTracker`** adjusts weights by fixed deltas:
+**PreferenceTracker** adjusts weights by fixed deltas (no ML):
 
 | Action | Delta | Clamp |
 |---|---|---|
 | 👍 Useful | +0.10 | [0.1, 1.0] |
+| Clicked an analysis | +0.05 | [0.1, 1.0] |
 | Column selection | +0.05 | [0.1, 1.0] |
 | 👎 Not Useful | −0.10 | [0.1, 1.0] |
+| Ignored (not clicked) | −0.02 | [0.1, 1.0] |
 
-All weights are session-only (lost on page reload). Manual slider overrides are logged but not decayed.
+### Additional Features
+
+- **Analysis Goals** — set a focus (e.g., "Find Anomalies") that overrides all priorities via goal-specific weights
+- **Save/Load** — export preferences to `~/.eda_assistant_prefs.json`
+- **Temporal Decay** — older interactions lose influence over time; 5 interactions decay one step each
+
+## AI Insights (Optional)
+
+An optional LLM layer enriches analysis with natural-language observations. Supports three modes:
+
+| Provider | Key Requirement | Default Model |
+|---|---|---|
+| Local (Ollama) | None | llama3.2:3b |
+| OpenRouter (free tier) | `OPENROUTER_API_KEY` | meta-llama/llama-3.2-3b-instruct |
+| Groq (free tier) | `GROQ_API_KEY` | llama-3.2-3b-preview |
+| Custom API | `CUSTOM_API_KEY` + endpoint | Configurable |
+
+Toggle in sidebar. Features streaming output, context trimming for speed, automatic model selection based on OpenAI-compatibility, and an LRU-cached response store (capped at 20 entries).
+
+## Natural Language Query Bar
+
+Type freeform queries like `"show me outliers"` or `"correlation between columns"` into the NLQ bar (visible after finalization). Uses keyword pattern matching (no LLM) to map queries to analysis types with confidence scores.
 
 ## Insight Generation
 
-`insight_generator.py` produces text from actual data values — no pre-written templates. Examples:
+`insight_generator.py` produces text from actual data values — no pre-written templates. Includes:
 
-- `"Dataset has 1,234 rows and 15 columns."`
-- `"Missing values detected — 'age' has the most (40.2%)."`
-- `"'revenue' is right-skewed (skewness=2.34)."`
+- `generate_insights(data_profile)` — per-column observations
+- `explain_recommendation(rec, data_profile, user_prefs, quality_report)` — why a recommendation scored as it did
+- `compare_recommendations(rec1, rec2)` — markdown table comparing scores and factors
+- `global_explanation_summary(...)` — session-wide markdown summary
+- `explain_user_preferences(preferences)` — plain-text preference summary
+
+## Counterfactual Slider
+
+Each recommendation's explanation includes a "What if?" slider that scales the score in-place (no full engine re-run) to show how changing the priority would affect ranking.
 
 ## Visualization
 
-All charts use **plotly** (interactive: zoom, pan, hover, download as PNG). No matplotlib or seaborn dependency.
-
-Supported chart types by analysis:
+All charts use **plotly** (interactive: zoom, pan, hover, download as PNG). No matplotlib or seaborn.
 
 | Analysis | Chart Types |
 |---|---|
@@ -156,20 +183,35 @@ Supported chart types by analysis:
 | Outliers | Boxplot |
 | Time Series | Line |
 
+## Expert Mode
+
+Sidebar toggle that reveals: raw DataFrame viewer, CSV download button, and full recommendation JSON with technical details (base score, data relevance, quality adjustment, diversity penalty).
+
 ## Project Structure
 
 ```
 ├── app.py                    # Streamlit UI (sidebar, recommendations, viz)
 ├── data_processor.py         # File loading, dataset cleansing, profiling
 ├── data_quality.py           # DataQualityPipeline, QualityReport, cleanse()
-├── recommendation_engine.py  # Scoring and ranking logic
-├── preference_learner.py     # PreferenceTracker: feedback → weight adjustment
-├── insight_generator.py      # Data-driven text generation
+├── recommendation_engine.py  # Scoring/ranking, diversity, column interestingness
+├── preference_learner.py     # PreferenceTracker: 5 actions + goal/decay/persistence
+├── insight_generator.py      # Explanations, comparisons, global summary
 ├── visualization_generator.py# Plotly chart creation
-├── constants.py              # Shared type lists and default values
+├── constants.py              # ANALYSIS_TYPES, DEFAULT_PREFERENCES, ANALYSIS_GOALS
+├── llm_adapter.py            # Optional LLM analysis (local + remote)
+├── nlq_engine.py             # Natural language query → analysis type
 ├── requirements.txt
 └── README.md
 ```
+
+## Testing
+
+Run all 42 tests:
+```bash
+python test_phase1.py && python test_phase2.py && python test_phase3.py && python test_phase4.py && python test_data_quality.py
+```
+
+Test coverage: diversity penalty, implicit tracking, comparative explanations, regression checks, column interestingness, global summary, empty history, sampling concept, goal setting, temporal decay, save/load round-trip, NLQ keyword matching, data quality pipeline (12 pipeline steps).
 
 ## Dependencies
 
@@ -184,8 +226,9 @@ Supported chart types by analysis:
 
 ## Limitations
 
-- Session-only state: preferences reset on page reload
-- No ML or AI: scoring uses fixed heuristics, not learned models
+- Session-only state: preferences reset on page reload (optional save/load via JSON)
+- No ML or AI: scoring uses fixed heuristics, not learned models; LLM insights are optional
 - Time series analysis plots against the first numerical column only
 - Correlation uses pearson by default (spearman/kendall not exposed in UI)
-- Large datasets (>100k rows) may be slow due to full in-memory processing
+- Large datasets (>100k rows) may be slow (progressive sampling available as opt-in)
+- Column selection changes permanently adjust preference weights (not debounced)

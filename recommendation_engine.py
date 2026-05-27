@@ -9,6 +9,8 @@ REQUIRED_PROFILE_KEYS = [
     'time_series_candidates', 'categorical_cardinality', 'has_outliers'
 ]
 
+NUMERICAL_CATEGORIES = frozenset({'numerical', 'numerical_pairs'})
+
 
 class RecommendationEngine:
     def __init__(self):
@@ -57,8 +59,8 @@ class RecommendationEngine:
             }
         }
         
-    def generate_recommendations(self, data_profile, user_preferences):
-        """Generate ranked recommendations based on data and user preferences"""
+    def generate_recommendations(self, data_profile, user_preferences, quality_score=None):
+        """Generate ranked recommendations based on data and user preferences."""
         missing_keys = [k for k in REQUIRED_PROFILE_KEYS if k not in data_profile]
         if missing_keys:
             raise ValueError(f"data_profile missing required keys: {missing_keys}")
@@ -67,33 +69,100 @@ class RecommendationEngine:
 
         for analysis_type, properties in self.analysis_catalog.items():
             if self._is_applicable(analysis_type, data_profile):
-                # Calculate relevance score 
                 base_score = properties['base_score']
-                user_preference_score = user_preferences.get(analysis_type, 0.5)
+                pref_score = user_preferences.get(analysis_type, 0.5)
                 data_relevance = self._calculate_data_relevance(analysis_type, data_profile)
                 
-                final_score = base_score * user_preference_score * data_relevance
+                final_score = base_score * pref_score * data_relevance
                 
-                # Get applicable columns for this analysis
+                if quality_score is not None:
+                    quality_adjustment = 0.5 + 0.5 * quality_score
+                    final_score = final_score * quality_adjustment
+                else:
+                    quality_adjustment = None
+                
                 applicable_columns = self._get_applicable_columns(analysis_type, data_profile)
                 
                 if applicable_columns:
                     data_factors = self._get_data_factors(analysis_type, data_profile)
+                    sorted_cols = sorted(
+                        applicable_columns,
+                        key=lambda c: self._score_column_interestingness(analysis_type, c, data_profile),
+                        reverse=True
+                    )
                     recommendations.append({
                         'type': analysis_type,
                         'title': f"{analysis_type.title()} Analysis",
                         'description': properties['description'],
                         'techniques': properties['techniques'],
                         'score': final_score,
+                        'base_score': base_score,
+                        'pref_score': pref_score,
+                        'data_relevance': data_relevance,
+                        'quality_adjustment': quality_adjustment,
+                        'diversity_penalty': None,
                         'data_factors': data_factors,
-                        'columns': applicable_columns
+                        'columns': sorted_cols
                     })
         
-        # Sort by final score
+        recommendations.sort(key=lambda x: x['score'], reverse=True)
+        recommendations = self._apply_diversity_penalty(recommendations)
         return sorted(recommendations, key=lambda x: x['score'], reverse=True)
     
+    def _applicable_category(self, analysis_type):
+        mapping = {
+            'distribution': 'numerical',
+            'correlation': 'numerical_pairs',
+            'outliers': 'numerical',
+            'categorical': 'categorical',
+            'time_series': 'datetime',
+            'missing_values': 'any',
+        }
+        return mapping.get(analysis_type, 'any')
+    
+    def _apply_diversity_penalty(self, recommendations):
+        seen_categories = set()
+        for rec in recommendations:
+            cat = self._applicable_category(rec['type'])
+            if cat in seen_categories and cat != 'any':
+                rec['diversity_penalty'] = 0.85
+                rec['score'] = rec['score'] * 0.85
+            seen_categories.add(cat)
+        return recommendations
+
+    def _score_column_interestingness(self, analysis_type, column, data_profile):
+        skewness = data_profile.get('skewness', {})
+        has_outliers = data_profile.get('has_outliers', {})
+        missing_pct = data_profile.get('missing_percentage', {})
+        cardinality = data_profile.get('categorical_cardinality', {})
+        
+        if analysis_type in ('distribution', 'outliers', 'correlation'):
+            skew = abs(skewness.get(column, 0) or 0)
+            outlier_pct = has_outliers.get(column, 0)
+            missing = missing_pct.get(column, 0)
+            score = skew * 0.6 + outlier_pct * 0.4
+            score = min(score, 1.0)
+            if missing > 50:
+                score *= 0.5
+            return score
+        
+        if analysis_type == 'categorical':
+            card = cardinality.get(column, 1)
+            if card <= 1:
+                return 0.0
+            score = 1.0 - abs(card - 10) / 30
+            score = max(0.3, min(0.9, score))
+            return score
+        
+        if analysis_type == 'missing_values':
+            return min(missing_pct.get(column, 0) / 100, 1.0)
+        
+        if analysis_type == 'time_series':
+            return 1.0
+        
+        return 0.5
+    
     def _is_applicable(self, analysis_type, data_profile):
-        """Check if analysis type is applicable to the current dataset"""
         if analysis_type == 'distribution':
             return len(data_profile['numerical_cols']) > 0
         
@@ -116,9 +185,7 @@ class RecommendationEngine:
         return False
     
     def _calculate_data_relevance(self, analysis_type, data_profile):
-        """Calculate how relevant an analysis is based on data characteristics"""
         if analysis_type == 'distribution':
-            # More relevant for skewed distributions
             skewed_cols = sum(1 for _, skew in data_profile['skewness'].items() 
                               if skew is not None and abs(skew) > 1)
             if skewed_cols > 0:
@@ -126,11 +193,9 @@ class RecommendationEngine:
             return 0.7
         
         elif analysis_type == 'correlation':
-            # Always highly relevant for multivariate numerical data
             return 1.0
         
         elif analysis_type == 'missing_values':
-            # More relevant with higher percentage of missing values
             missing_percentages = [v for v in data_profile['missing_percentage'].values() if v > 0]
             if missing_percentages:
                 avg_missing = sum(missing_percentages) / len(missing_percentages)
@@ -138,7 +203,6 @@ class RecommendationEngine:
             return 0.5
         
         elif analysis_type == 'categorical':
-            # More relevant for categorical columns with reasonable cardinality
             good_cardinality_cols = sum(1 for col, count in data_profile['categorical_cardinality'].items() 
                                       if 2 <= count <= 20)
             if good_cardinality_cols > 0:
@@ -146,7 +210,6 @@ class RecommendationEngine:
             return 0.6
         
         elif analysis_type == 'outliers':
-            # More relevant with higher percentage of outliers
             outlier_percentages = list(data_profile['has_outliers'].values())
             if outlier_percentages:
                 avg_outlier_pct = sum(outlier_percentages) / len(outlier_percentages)
@@ -154,7 +217,6 @@ class RecommendationEngine:
             return 0.6
         
         elif analysis_type == 'time_series':
-            # More relevant with more time-series candidates
             num_candidates = len(data_profile['time_series_candidates'])
             return min(1.0, 0.7 + (0.3 * min(num_candidates / 3, 1.0)))
         
@@ -194,7 +256,6 @@ class RecommendationEngine:
         return factors
 
     def _get_applicable_columns(self, analysis_type, data_profile):
-        """Get columns applicable for a specific analysis type"""
         if analysis_type == 'distribution':
             return data_profile['numerical_cols']
         
@@ -214,5 +275,3 @@ class RecommendationEngine:
             return data_profile['time_series_candidates']
         
         return []
-    
-     

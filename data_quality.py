@@ -55,7 +55,7 @@ class DataQualityPipeline:
     def __init__(self):
         self.warnings: list[str] = []
 
-    def run(self, df: pd.DataFrame) -> tuple[pd.DataFrame, QualityReport]:
+    def run(self, df: pd.DataFrame, skip_name_normalization: bool = False) -> tuple[pd.DataFrame, QualityReport]:
         """Run full pipeline. Returns (cleaned_df, QualityReport)."""
         if df.empty:
             report = QualityReport(warnings=["Empty dataset — no processing applied"])
@@ -70,7 +70,8 @@ class DataQualityPipeline:
         if renamed:
             self.warnings.append(f"Renamed {len(renamed)} duplicate column name(s)")
 
-        df = self._normalize_column_names(df)
+        if not skip_name_normalization:
+            df = self._normalize_column_names(df)
 
         df = self._normalize_infinite(df)
 
@@ -114,7 +115,7 @@ class DataQualityPipeline:
     def _normalize_missing(self, df: pd.DataFrame) -> pd.DataFrame:
         """Replace common missing-value tokens with np.nan."""
         for col in df.columns:
-            if pd.api.types.is_object_dtype(df[col]):
+            if pd.api.types.is_object_dtype(df[col]) or pd.api.types.is_string_dtype(df[col]):
                 df[col] = df[col].apply(
                     lambda x: np.nan if isinstance(x, str) and x.strip() in MISSING_TOKENS else x
                 )
@@ -185,7 +186,7 @@ class DataQualityPipeline:
             if df[col].isnull().mean() > 0.8 or df[col].nunique(dropna=False) <= 1:
                 continue
 
-            if not pd.api.types.is_object_dtype(df[col]):
+            if not (pd.api.types.is_object_dtype(df[col]) or pd.api.types.is_string_dtype(df[col])):
                 continue
 
             non_null = df[col].dropna()
@@ -204,7 +205,7 @@ class DataQualityPipeline:
             col_lower = col.lower()
             if any(kw in col_lower for kw in ['date', 'time', 'timestamp', 'datetime', 'created', 'updated']):
                 try:
-                    parsed = pd.to_datetime(df[col], errors='coerce', infer_datetime_format=True)
+                    parsed = pd.to_datetime(df[col], errors='coerce', dayfirst=True)
                     if parsed.notna().mean() > 0.8:
                         df[col] = parsed
                 except Exception:
@@ -274,6 +275,6 @@ class DataQualityPipeline:
 
 # ── Convenience function ──────────────────────────────────────
 
-def cleanse(df: pd.DataFrame) -> tuple[pd.DataFrame, QualityReport]:
+def cleanse(df: pd.DataFrame, skip_name_normalization: bool = False) -> tuple[pd.DataFrame, QualityReport]:
     """One-shot entry point for the full pipeline."""
-    return DataQualityPipeline().run(df)
+    return DataQualityPipeline().run(df, skip_name_normalization=skip_name_normalization)

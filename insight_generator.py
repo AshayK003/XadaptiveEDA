@@ -13,7 +13,7 @@ TECHNIQUE_DESCRIPTIONS = {
 }
 
 
-def explain_recommendation(recommendation, data_profile, user_preferences):
+def explain_recommendation(recommendation, data_profile, user_preferences, quality_report=None):
     """Explain why a recommendation scored the way it did, using actual values."""
     rec_type = recommendation['type']
     score = recommendation['score']
@@ -21,8 +21,22 @@ def explain_recommendation(recommendation, data_profile, user_preferences):
 
     reasons = []
 
-    if score >= 0.5:
-        reasons.append(f"Relevance score: {score:.2f} (scale 0-1).")
+    base = recommendation.get('base_score')
+    relevance = recommendation.get('data_relevance')
+    quality_adj = recommendation.get('quality_adjustment')
+    if base is not None and relevance is not None:
+        parts = [f"{base:.2f} (base) × {pref_score:.1f} (priority) × {relevance:.2f} (data)"]
+        if quality_adj is not None:
+            score_no_q = base * pref_score * relevance
+            parts.append(f"× {quality_adj:.2f} (quality)")
+            reasons.append(f"Score = {' × '.join(parts)} = {score_no_q:.2f} × {quality_adj:.2f} = **{score:.2f}**")
+            if quality_adj < 0.9:
+                reasons.append("Data quality concerns reduced this score (see Data Quality Report).")
+        else:
+            reasons.append(f"Score = " + " x ".join(parts) + f" = **{score:.2f}**")
+    else:
+        if score >= 0.5:
+            reasons.append(f"Relevance score: {score:.2f} (scale 0-1).")
 
     skewed_cols = {col: s for col, s in data_profile.get('skewness', {}).items()
                    if s is not None and abs(s) > 1}
@@ -61,7 +75,30 @@ def explain_recommendation(recommendation, data_profile, user_preferences):
         reasons.append("Priority is at the default level (0.5).")
 
     techniques = recommendation.get('techniques', [])
-    technique_reasons = [TECHNIQUE_DESCRIPTIONS.get(t, t) for t in techniques[:2]]
+    technique_reasons = []
+    for t in techniques[:2]:
+        desc = TECHNIQUE_DESCRIPTIONS.get(t, t)
+        if t == 'boxplot' and rec_type == 'outliers':
+            outlier_cols = list(data_profile.get('has_outliers', {}).keys())[:3]
+            if outlier_cols:
+                desc += f" — best for visualizing distributions of flagged columns: {', '.join(outlier_cols)}"
+        elif t == 'histogram' and rec_type == 'distribution':
+            skewed = [c for c, s in data_profile.get('skewness', {}).items() if s is not None and abs(s) > 1]
+            if skewed:
+                desc += f" — reveals the skew direction in {', '.join(skewed[:2])}"
+        technique_reasons.append(desc)
+
+    if quality_report and recommendation.get('columns'):
+        flagged = []
+        for col in recommendation['columns']:
+            if col in quality_report.sparse_columns:
+                flagged.append(f"{col} is sparse")
+            if col in quality_report.constant_columns:
+                flagged.append(f"{col} is constant")
+            if col in quality_report.mixed_type_columns:
+                flagged.append(f"{col} has mixed types")
+        if flagged:
+            technique_reasons.append("[Quality note] " + "; ".join(flagged))
 
     return {
         'reasons': reasons,
@@ -88,3 +125,79 @@ def explain_user_preferences(preferences):
         return "All priorities are near the default level (0.5)."
 
     return " | ".join(parts)
+
+
+def compare_recommendations(rec1, rec2):
+    """Generate side-by-side markdown comparison of two recommendations."""
+    lines = []
+    lines.append(f"| Component | **{rec1['title']}** | **{rec2['title']}** |")
+    lines.append("|---|---|---|")
+    lines.append(f"| Base score | {rec1.get('base_score', 'N/A'):.2f} | {rec2.get('base_score', 'N/A'):.2f} |")
+    lines.append(f"| Data relevance | {rec1.get('data_relevance', 'N/A'):.2f} | {rec2.get('data_relevance', 'N/A'):.2f} |")
+    p1 = rec1.get('pref_score', 'N/A')
+    p2 = rec2.get('pref_score', 'N/A')
+    lines.append(f"| Your priority | {p1:.1f} | {p2:.1f} |")
+    q1 = rec1.get('quality_adjustment')
+    q2 = rec2.get('quality_adjustment')
+    lines.append(f"| Quality adjustment | {f'{q1:.2f}' if q1 else 'N/A'} | {f'{q2:.2f}' if q2 else 'N/A'} |")
+    d1 = rec1.get('diversity_penalty')
+    d2 = rec2.get('diversity_penalty')
+    lines.append(f"| Diversity penalty | {f'{d1:.2f}' if d1 else 'None'} | {f'{d2:.2f}' if d2 else 'None'} |")
+    lines.append(f"| **Final score** | **{rec1.get('score', 0):.2f}** | **{rec2.get('score', 0):.2f}** |")
+    f1 = rec1.get('data_factors', [])
+    f2 = rec2.get('data_factors', [])
+    lines.append(f"| Data factors | {'; '.join(f1) if f1 else 'None'} | {'; '.join(f2) if f2 else 'None'} |")
+    return "\n".join(lines)
+
+
+def global_explanation_summary(data_profile, quality_report, interaction_history, user_preferences):
+    """Generate a session-wide markdown summary of exploration."""
+    lines = []
+    shape = data_profile.get('shape', (0, 0))
+    qs = quality_report.overall_quality_score if quality_report else None
+
+    lines.append("### Exploration Summary")
+    lines.append("")
+    lines.append(f"**Dataset:** {shape[0]:,} rows × {shape[1]} columns")
+    if qs is not None:
+        icon = "🟢" if qs >= 0.8 else ("🟡" if qs >= 0.5 else "🔴")
+        lines.append(f"**Quality score:** {icon} {qs:.2f}")
+
+    explored = set(e['recommendation_type'] for e in interaction_history if e.get('recommendation_type'))
+    if explored:
+        lines.append(f"\n**Explored analysis types:** {', '.join(sorted(explored))}")
+    else:
+        lines.append("\n**Explored analysis types:** No analysis types explored yet")
+
+    feedback = [e for e in interaction_history if e.get('action') in ('liked', 'disliked')]
+    if feedback:
+        liked = sum(1 for e in feedback if e['action'] == 'liked')
+        disliked = sum(1 for e in feedback if e['action'] == 'disliked')
+        lines.append(f"**Feedback given:** 👍 {liked} liked, 👎 {disliked} disliked")
+    else:
+        lines.append("**Feedback given:** None yet")
+
+    if user_preferences:
+        diverged = {k: v for k, v in user_preferences.items() if abs(v - 0.5) > 0.1}
+        if diverged:
+            lines.append("\n**Adjusted preferences:**")
+            for k, v in sorted(diverged.items(), key=lambda x: -abs(x[1] - 0.5)):
+                direction = "↑" if v > 0.5 else "↓"
+                lines.append(f"- {k}: {v:.2f} {direction}")
+        else:
+            lines.append("\n**Preferences:** All at default (0.5)")
+
+    if quality_report:
+        notes = []
+        if quality_report.sparse_columns:
+            notes.append(f"Sparse columns: {', '.join(quality_report.sparse_columns[:3])}")
+        if quality_report.constant_columns:
+            notes.append(f"Constant columns: {', '.join(quality_report.constant_columns[:3])}")
+        if quality_report.mixed_type_columns:
+            notes.append(f"Mixed types: {', '.join(quality_report.mixed_type_columns[:3])}")
+        if quality_report.duplicate_rows:
+            notes.append(f"Duplicate rows: {quality_report.duplicate_rows}")
+        if notes:
+            lines.append(f"\n**Data Quality Notes:** {'; '.join(notes)}")
+
+    return "\n".join(lines)
