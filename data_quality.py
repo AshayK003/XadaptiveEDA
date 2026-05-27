@@ -9,7 +9,6 @@ import pandas as pd
 import numpy as np
 import re
 from dataclasses import dataclass, field
-from typing import Any
 
 
 # ── Configuration ─────────────────────────────────────────────
@@ -20,7 +19,6 @@ MISSING_TOKENS = frozenset({
 })
 
 SPARSE_THRESHOLD = 0.5           # columns exceeding this missing ratio qualify
-LARGE_DATASET_ROWS = 100_000     # sampling threshold
 TYPE_INFERENCE_SAMPLE = 100      # rows to sample for type inference
 NUMERIC_CONFIDENCE = 0.9         # min fraction of parsable values to cast
 

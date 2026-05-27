@@ -240,24 +240,6 @@ def generate_analysis_local(profile, df, analysis_type, columns,
 
 # ── Remote API (OpenAI-compatible) ───────────────────────────
 
-def test_remote_connection(api_key, endpoint):
-    try:
-        payload = json.dumps({
-            "model": "gpt-3.5-turbo",
-            "messages": [{"role": "user", "content": "hi"}],
-            "max_tokens": 1
-        }).encode()
-        req = urllib.request.Request(endpoint, data=payload, method="POST")
-        req.add_header("Content-Type", "application/json")
-        req.add_header("Authorization", f"Bearer {api_key}")
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            return {"ok": resp.status == 200}
-    except urllib.error.HTTPError as e:
-        return {"ok": False, "error": f"HTTP {e.code}"}
-    except Exception as e:
-        return {"ok": False, "error": str(e)}
-
-
 def generate_analysis_remote(profile, df, analysis_type, columns,
                              api_key, endpoint, model):
     context = _build_context(profile, df, analysis_type, columns)
@@ -313,113 +295,6 @@ COLUMN_NAMING_SYSTEM_PROMPT = (
     "old_column_name → suggested_name"
 )
 
-
-# ── NLQ query classifier ──────────────────────────────────────
-
-NLQ_SYSTEM_PROMPT = (
-    "You are a query classifier for an exploratory data analysis tool. "
-    "Given a user's natural language question about their dataset, classify it into "
-    "exactly one of these analysis types:\n"
-    "- distribution (asking about value spread, shape, histogram, range, skewness)\n"
-    "- correlation (asking about relationships, associations, pairwise connections between columns)\n"
-    "- missing_values (asking about nulls, gaps, empty data, blanks)\n"
-    "- categorical (asking about categories, segments, groups, bar charts, frequencies)\n"
-    "- outliers (asking about anomalies, extremes, unusual values, spikes)\n"
-    "- time_series (asking about trends over time, seasonality, dates, chronological patterns)\n\n"
-    "If the query mentions specific column names, extract them from the provided column list.\n\n"
-    "Respond with valid JSON ONLY (no markdown, no extra text):\n"
-    '{"type": "analysis_type", "confidence": 0.0-1.0, "columns": ["col1", "col2"]}\n'
-    'If no type matches, use "type": null, "confidence": 0.0, "columns": []'
-)
-
-
-def classify_nlq(query, columns=None, model=DEFAULT_MODEL, provider="local",
-                 host=DEFAULT_HOST, port=DEFAULT_PORT,
-                 api_key="", endpoint=""):
-    """Use LLM to classify a natural language query into an analysis type.
-
-    Returns dict with keys: type, confidence, columns.
-    Falls back gracefully if LLM is unreachable.
-    """
-    cols_hint = f"\nAvailable columns: {', '.join(columns[:20])}" if columns else ""
-    user_prompt = (
-        f'Classify this user query: "{query}"'
-        f'{cols_hint}'
-    )
-
-    if provider == "local":
-        payload = json.dumps({
-            "model": model,
-            "prompt": user_prompt,
-            "system": NLQ_SYSTEM_PROMPT,
-            "stream": False,
-            "options": {"num_predict": 256, "temperature": 0.1}
-        }).encode()
-        try:
-            url = f"http://{host}:{port}/api/generate"
-            req = urllib.request.Request(url, data=payload, method="POST")
-            req.add_header("Content-Type", "application/json")
-            with _urlopen_retry(req, LOCAL_TIMEOUT) as resp:
-                result = json.loads(resp.read())
-                text = result.get("response", "").strip()
-        except Exception:
-            return None
-    else:
-        payload = json.dumps({
-            "model": model,
-            "messages": [
-                {"role": "system", "content": NLQ_SYSTEM_PROMPT},
-                {"role": "user", "content": user_prompt}
-            ],
-            "max_tokens": 256,
-            "temperature": 0.1
-        }).encode()
-        try:
-            req = urllib.request.Request(endpoint, data=payload, method="POST")
-            req.add_header("Content-Type", "application/json")
-            req.add_header("Authorization", f"Bearer {api_key}")
-            with _urlopen_retry(req, TIMEOUT) as resp:
-                result = json.loads(resp.read())
-                text = result["choices"][0]["message"]["content"].strip()
-        except Exception:
-            return None
-
-    # Parse JSON from LLM response — handle possible markdown fences
-    text = text.strip()
-    if text.startswith("```"):
-        text = text.split("\n", 1)[-1]
-        text = text.rsplit("```", 1)[0]
-    text = text.strip()
-    if not text.startswith("{"):
-        return None
-    try:
-        parsed = json.loads(text)
-    except json.JSONDecodeError:
-        return None
-
-    valid_types = {'distribution', 'correlation', 'missing_values',
-                   'categorical', 'outliers', 'time_series'}
-    atype = parsed.get("type")
-    if atype is not None and atype not in valid_types:
-        return None
-
-    # Filter extracted columns against the available list
-    extracted = parsed.get("columns", [])
-    if columns and extracted:
-        col_lower = {c.lower(): c for c in columns}
-        validated = []
-        for ec in extracted:
-            if ec in columns:
-                validated.append(ec)
-            elif ec.lower() in col_lower:
-                validated.append(col_lower[ec.lower()])
-        extracted = validated
-
-    return {
-        "type": atype,
-        "confidence": min(1.0, max(0.0, parsed.get("confidence", 0.5))),
-        "columns": extracted,
-    }
 
 def suggest_column_names(df, unnamed_cols, model=DEFAULT_MODEL, provider="local",
                          host=DEFAULT_HOST, port=DEFAULT_PORT,

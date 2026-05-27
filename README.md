@@ -85,7 +85,7 @@ Toggle in sidebar. Features streaming output for speed, LRU-cached response stor
 
 ## NLP Query Classifier
 
-The `nlq_engine.py` module classifies short queries into analysis types using tokenization, stemming, synonym expansion, and TF-weighted overlap scoring. When AI is enabled, the LLM serves as the primary classifier with NLP as fallback. Extracts column names from queries.
+The `nlq_engine.py` module classifies short queries into analysis types using tokenization, stemming, synonym expansion, and TF-weighted overlap scoring. Extracts column names from queries. (Legacy interface — the NLQ bar has been replaced by the chat interface; `match_query` and `format_result` remain as test-covered utilities.)
 
 ## Insight Generation
 
@@ -94,7 +94,6 @@ The `nlq_engine.py` module classifies short queries into analysis types using to
 - `explain_recommendation(rec, data_profile, user_prefs, quality_report)` — why a recommendation scored as it did
 - `compare_recommendations(rec1, rec2)` — markdown table comparing scores and factors
 - `global_explanation_summary(...)` — session-wide markdown summary
-- `explain_user_preferences(preferences)` — plain-text preference summary
 
 ## Counterfactual Slider
 
@@ -128,7 +127,7 @@ Sidebar toggle that reveals: raw DataFrame viewer, CSV download button, and full
 ├── insight_generator.py      # Explanations, comparisons, global summary
 ├── visualization_generator.py# Plotly chart creation
 ├── constants.py              # ANALYSIS_TYPES, DEFAULT_PREFERENCES, ANALYSIS_GOALS
-├── llm_adapter.py            # LLM analysis, NLQ classification, chat, column naming
+├── llm_adapter.py            # LLM analysis, chat, column naming
 ├── nlq_engine.py             # NLP query classifier (stemming, synonyms, TF scoring)
 ├── test_phase1.py–test_phase4.py  # 54 unit tests
 ├── test_data_quality.py      # Data quality pipeline tests

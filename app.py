@@ -1,31 +1,14 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
 import plotly.express as px
-import sys, os
+import os
+import sys
 
-
-def _load_env(path=".env"):
-    """Minimal .env loader — no external dependency needed."""
-    try:
-        with open(path) as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith("#") and "=" in line:
-                    key, _, val = line.partition("=")
-                    os.environ.setdefault(key.strip(), val.strip())
-    except FileNotFoundError:
-        pass
-
-
-_load_env()
-
-# Import custom modules
 from data_processor import DataProcessor
 from recommendation_engine import RecommendationEngine
 from preference_learner import PreferenceTracker
-from insight_generator import explain_recommendation, explain_user_preferences, compare_recommendations, global_explanation_summary
 from visualization_generator import VisualizationGenerator
+from insight_generator import explain_recommendation, compare_recommendations, global_explanation_summary
 from constants import DEFAULT_PREFERENCES, ANALYSIS_GOALS
 from data_quality import QualityReport
 import llm_adapter

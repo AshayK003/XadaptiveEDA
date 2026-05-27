@@ -49,24 +49,6 @@ class PreferenceTracker:
         self.preference_weights[rec_type] = max(0.1, min(1.0, current + delta))
         return self.preference_weights
 
-    def get_preferences(self):
-        return self.preference_weights
-
-    def get_top_preferences(self, n=3):
-        sorted_prefs = sorted(self.preference_weights.items(), key=lambda x: x[1], reverse=True)
-        return sorted_prefs[:n]
-
-    def get_interaction_stats(self):
-        if not self.interaction_history:
-            return {"total_interactions": 0}
-        stats = {"total_interactions": len(self.interaction_history), "action_counts": {}, "type_counts": {}}
-        for interaction in self.interaction_history:
-            action = interaction['action']
-            rec_type = interaction['recommendation_type']
-            stats["action_counts"][action] = stats["action_counts"].get(action, 0) + 1
-            stats["type_counts"][rec_type] = stats["type_counts"].get(rec_type, 0) + 1
-        return stats
-
     def set_preferences(self, preferences):
         if not isinstance(preferences, dict):
             raise ValueError("Preferences must be a dictionary")

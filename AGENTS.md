@@ -49,7 +49,6 @@ Always check/initialize in `app.py` lines 41-54:
 - `ai_enabled` — bool toggle for AI insights
 - `_active_goal` — string name of current analysis goal
 - `_expert_mode` — bool for expert/beginner toggle
-- `_nlq_match` — string from NLQ bar match result
 - `_finalized` — bool, set after user clicks Finalize Dataset
 - `_cols_renamed` — bool, set after column rename step
 - `_rows_dropped` — int, number of rows dropped (set after drop step)
@@ -91,7 +90,6 @@ Always check/initialize in `app.py` lines 41-54:
   - Column selection count: +0.05 per unique column selected
   - Clamped to [0.1, 1.0]
 - set_preferences() validates all keys present and values in range; logs a manual_adjustment interaction
-- get_interaction_stats() returns totals only — no UI currently uses this
 - set_goal() loads predefined weight overrides from ANALYSIS_GOALS; uses .clear() + .update() for dict identity
 - apply_temporal_decay() decays weights for interactions older than the median; 5 interactions decay one step
 
@@ -179,12 +177,10 @@ All return plotly `go.Figure`. Matplotlib/seaborn removed — do NOT import them
 - `explain_recommendation(rec, data_profile, user_prefs, quality_report)` → dict with 'reasons' and 'technique_reasons'
 - `compare_recommendations(rec1, rec2)` → markdown table comparing scores and factors
 - `global_explanation_summary(data_profile, quality_report, interaction_history, user_prefs)` → session-wide markdown summary
-- `explain_user_preferences(preferences)` → plain-text summary
 
 ### NLQ Engine (nlq_engine.py)
 - `match_query(text)` → (match_type, confidence, columns) tuple or (None, 0.0, [])
-- `match_query_with_llm(text, columns, llm_classifier)` → (match_type, confidence, columns, source) — LLM primary, NLP fallback
-- Uses NLP (tokenization, stemming, synonym expansion, TF-weighted overlap scoring) + optional LLM classifier
+- Uses NLP (tokenization, stemming, synonym expansion, TF-weighted overlap scoring)
 - `format_result(match, confidence, mentioned_columns)` → dict with title, description, techniques or None
 
 ### LLM Adapter (llm_adapter.py)
@@ -194,7 +190,6 @@ All return plotly `go.Figure`. Matplotlib/seaborn removed — do NOT import them
 - Auto model selection for OpenAI-compatible endpoints
 - LRU-capped AI cache at 20 entries (key format: `_ai_{provider}_{type}_{i}_{hash(tuple(columns))}`)
 - Forced AI reload via button clears cache for current analysis
-- `classify_nlq(query, columns)` — classifies a free-text query into an analysis type using LLM
 - `chat_with_data(query, data_profile, df, conversation_history)` — answers free-form dataset questions with full dataset context
 
 ## Key Decisions (DO NOT REVERSE)
@@ -225,16 +220,15 @@ All return plotly `go.Figure`. Matplotlib/seaborn removed — do NOT import them
 - **Counterfactual slider** — uses inline score scaling (`new_score = old_score × (cf_value / old_pref)`), NOT full engine re-run. This avoids O(n²) recomputation.
 - **AI cache** — LRU-capped at 20 entries using session state key scan + delete-oldest. Keys format: `_ai_{provider}_{type}_{i}_{hash(tuple(columns))}`.
 - **Expert mode** — sidebar `st.toggle("_expert_mode")`. Shows raw DataFrame + CSV download + full recommendation JSON. Uses `st.caption` not nested expanders.
-- **NLQ bar** — `nlq_engine.py` uses keyword patterns (no LLM). Import moved to top level to avoid per-rerun import overhead.
 - **Input validation** — `data_processor.load_data()` reads uploaded file into `BytesIO` for size/empty checks before pandas parsing. Falls back to `latin1` encoding on `UnicodeDecodeError`.
 - **Column rename safety** — re-cleansing after column rename uses `skip_name_normalization=True` to prevent `_normalize_column_names()` from undoing user renames.
 - **Second project copy** — `C:\Users\Ashay\X-adapativeEDA\` is maintained in sync with `D:\Personal projects\X-adapativeEDA\`. Changes should be copied unless user says otherwise.
 - **Pandas 3.0 string dtype** — pandas 3.0 uses `str` (StringDtype) instead of `object` for string columns. `is_object_dtype()` returns False for `str` dtype, so all `is_string_dtype()` checks must be added alongside `is_object_dtype()` in `_normalize_missing`, `_infer_types`, and `_detect_mixed_types`.
 - **3-step pre-analysis pipeline** — after upload, user goes through: rename unnamed columns → drop first N rows → Finalize. The finalize block must also save `st.session_state.df = df` to persist the renamed/dropped DataFrame.
 - **rec_columns tracking** — column selections per recommendation are tracked via `st.session_state._rec_cols_{type}_{i}` keys to preserve selection across reruns.
-- **LLM as primary NLQ classifier** — When AI is enabled, `match_query_with_llm()` uses the LLM first via `classify_nlq()` and falls back to NLP only if the LLM is unreachable. Separate toggle `_chat_enabled` for the chat interface, independent of `ai_enabled`.
 - **Chat context building** — `chat_with_data()` sends dataset stats (shape, columns, sample rows, missing %, skew, outliers) as context to the LLM. Keeps last 6 conversation exchanges for follow-ups. Provider settings shared with AI insights.
-- **NLQ bar removed** — The `🔍 Ask about your data` text input was removed. Replaced by the dedicated `💬 Ask anything about your data` chat interface. The underlying NLQ engine still powers the NLP classifier for internal routing.
+- **NLQ bar removed** — replaced by the dedicated `💬 Ask anything about your data` chat interface. The NLP engine (`match_query`, `format_result`) remains as test-covered utilities.
+- **`plotly.express` needed in app.py** — sidebar preference bar chart uses `px.bar()`. Ensure `import plotly.express as px` is present in app.py imports.
 
 ## File Loading (data_processor.py)
 - Supports: CSV, XLSX, XLS, JSON

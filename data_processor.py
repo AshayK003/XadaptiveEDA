@@ -1,5 +1,4 @@
 import pandas as pd
-import numpy as np
 import os
 import warnings
 from data_quality import cleanse as _cleanse, QualityReport

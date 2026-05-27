@@ -86,6 +86,9 @@ The `chat_with_data()` function builds a structured text summary of the dataset 
 ### Separate Toggles for Independent Features
 The AI insights toggle (`ai_enabled`) and the chat toggle (`_chat_enabled`) are independent sidebar toggles. They share the same provider/connection settings block (shown when either is enabled) but activate different UI sections. Users can enable chat without AI analysis (and vice versa). This avoids the common mistake of bundling unrelated features behind a single toggle.
 
+### Dead Code Cleanup: Top-Down Import + Function Sweep
+After removing the NLQ bar, a dead code audit revealed six unused imports and seven dead functions across the codebase. Removal order: (1) unused imports (`numpy` in app.py/data_processor.py/recommendation_engine.py, `typing.Any` in data_quality.py, `json` in nlq_engine.py), (2) unused public functions (`test_remote_connection`, `classify_nlq`, `NLQ_SYSTEM_PROMPT` in llm_adapter.py; `match_query_with_llm` in nlq_engine.py; `get_preferences`, `get_top_preferences`, `get_interaction_stats` in preference_learner.py), (3) unused imports (`explain_user_preferences` from app.py), (4) stale constants (`LARGE_DATASET_ROWS` from data_quality.py), (5) always-true condition (negation dampening bug in nlq_engine.py). Verify with `python -c "import ast; ast.parse(open('app.py', encoding='utf-8').read()); print('OK')"`. Then run all 54 tests to confirm nothing broke. Also uncovered a missing `import plotly.express as px` — the sidebar bar chart had been silently broken since `numpy` was removed alongside `px` in a prior dead-import pass.
+
 ---
 
 ## Failure Patterns
@@ -180,14 +183,15 @@ Storing dicts of full-sentence insights keyed by analysis type is maintenance-he
 ## Tooling Shortcuts
 
 | Context | Command |
-|---|---|---|
+| |---|---|
 | Run app | `streamlit run app.py` |
 | Install deps | `pip install -r requirements.txt` |
 | Run all tests | `python test_phase1.py && python test_phase2.py && python test_phase3.py && python test_phase4.py && python test_data_quality.py` |
-| Syntax check | `python -m py_compile app.py` |
+| Syntax check | `python -c "import ast; ast.parse(open('app.py', encoding='utf-8').read()); print('OK')"` |
 | Git add+commit | `git add -A; git commit -m "prefix: message"` |
 | Push to origin | `git push -u origin main` |
 | Sync second copy | `Copy-Item -Path "D:\...\file" -Dest "C:\...\file" -Force` |
+| Robocopy sync | `robocopy "D:\Personal projects\X-adapativeEDA" "C:\Users\Ashay\X-adapativeEDA" /E /NP /NFL /NDL /NJH /NJS` |
 | Check .env in git | `git check-ignore .env` |
 
 ---

@@ -6,7 +6,6 @@ and optionally extracts column names from queries.
 
 import re
 import math
-import json
 
 # ── Stemmer (rule-based, no deps) ─────────────────────────────
 
@@ -224,8 +223,7 @@ def match_query(query, columns=None):
     for t in tokens:
         if t in negated:
             for atype in scores:
-                if t in _expand(t):
-                    scores[atype] *= 0.2
+                scores[atype] *= 0.2
 
     # Best match
     best_type = max(scores, key=lambda k: scores[k])
@@ -274,34 +272,3 @@ def format_result(analysis_type, confidence, mentioned_columns=None):
         'confidence': confidence,
         'columns': mentioned_columns or [],
     }
-
-
-def match_query_with_llm(query, columns=None, llm_classifier=None):
-    """Match query using LLM first, then NLP fallback if LLM unavailable.
-
-    Args:
-        query: Free-form text query.
-        columns: Optional list of column names.
-        llm_classifier: Optional callable that takes (query, columns) and
-                        returns dict with keys: type, confidence, columns.
-                        If None, runs NLP only.
-
-    Returns:
-        (analysis_type, confidence, mentioned_columns, source) tuple.
-        source is 'nlp' or 'llm'.
-    """
-    # LLM first (primary path)
-    if llm_classifier:
-        try:
-            llm_result = llm_classifier(query, columns=columns)
-            if llm_result and llm_result.get("type"):
-                llm_conf = llm_result.get("confidence", 0.7)
-                llm_cols = llm_result.get("columns", [])
-                if llm_conf >= 0.3:
-                    return (llm_result["type"], llm_conf, llm_cols, "llm")
-        except Exception:
-            pass
-
-    # NLP fallback if LLM fails or returns low confidence
-    nlp_type, nlp_conf, nlp_cols = match_query(query, columns=columns)
-    return (nlp_type, nlp_conf, nlp_cols, "nlp")
