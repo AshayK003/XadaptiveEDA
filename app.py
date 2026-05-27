@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-from datetime import datetime
 
 # Import custom modules
 from data_processor import DataProcessor
@@ -28,8 +27,10 @@ st.markdown("""
     .stButton>button {
         width: 100%;
     }
-    .st-emotion-cache-nahz7x {
-        font-size: 0.8rem;
+    .stButton>button:focus-visible,
+    .stCheckbox>label:focus-visible {
+        outline: 2px solid #1f77b4;
+        outline-offset: 2px;
     }
     div[data-testid="stExpander"] details summary p {
         font-weight: bold;
@@ -72,16 +73,18 @@ with st.sidebar:
     if uploaded_file is not None:
         file_details = {"Filename": uploaded_file.name, "File size": f"{uploaded_file.size / 1024:.1f} KB"}
         st.write("File Details:", file_details)
+        if uploaded_file.size > 50 * 1024 * 1024:
+            st.warning("Large file (>50 MB) — processing may be slow or fail.")
     
     st.header("Your Priorities")
     if st.session_state.user_preferences:
-        preferences_df = pd.DataFrame({
-            'Analysis Type': list(st.session_state.user_preferences.keys()),
-            'Preference Score': list(st.session_state.user_preferences.values())
-        })
-        
-        preferences_df = preferences_df.sort_values('Preference Score', ascending=False)
-        st.bar_chart(preferences_df.set_index('Analysis Type'))
+        if st.session_state.data_profile is not None:
+            preferences_df = pd.DataFrame({
+                'Analysis Type': list(st.session_state.user_preferences.keys()),
+                'Preference Score': list(st.session_state.user_preferences.values())
+            })
+            preferences_df = preferences_df.sort_values('Preference Score', ascending=False)
+            st.bar_chart(preferences_df.set_index('Analysis Type'), color='#1f77b4')
         
         st.markdown("#### Current Priority Levels")
         st.write(explain_user_preferences(st.session_state.user_preferences))
@@ -147,8 +150,14 @@ if uploaded_file is not None:
                 st.session_state.recommendations = recommendations
         except Exception as e:
             import sys, os
-            diag = f"Error type: {type(e).__name__}\nFile: {uploaded_file.name}\nExtension: {os.path.splitext(uploaded_file.name)[1].lower()}\nPython: {sys.executable}"
-            st.error(f"Error processing file: {str(e)}\n\n{diag}")
+            st.error(f"Could not process **{uploaded_file.name}**: {str(e)}")
+            with st.expander("Technical details"):
+                st.code(
+                    f"Error type: {type(e).__name__}\n"
+                    f"File: {uploaded_file.name}\n"
+                    f"Extension: {os.path.splitext(uploaded_file.name)[1].lower()}\n"
+                    f"Python: {sys.executable}"
+                )
             st.stop()
     else:
         # Use cached data
@@ -166,17 +175,19 @@ if uploaded_file is not None:
     with col2:
         st.metric("Columns", df.shape[1])
     with col3:
-        if data_profile['missing_values'] and df.shape[0] > 0:
-            total_missing = sum(data_profile['missing_values'].values())
+        total_missing = sum(data_profile.get('missing_values', {}).values())
+        if df.shape[0] * df.shape[1] > 0:
             missing_pct = total_missing / (df.shape[0] * df.shape[1]) * 100
-            st.metric("Missing Values", f"{total_missing:,} ({missing_pct:.1f}%)")
+        else:
+            missing_pct = 0.0
+        st.metric("Missing Values", f"{total_missing:,} ({missing_pct:.1f}%)")
     
     # Data preview
-    with st.expander("Data Preview", expanded=True):
+    with st.expander("Data Preview", expanded=False):
         st.dataframe(df.head(10), use_container_width=True)
     
     # Data profile summary
-    with st.expander("Dataset Profile Summary"):
+    with st.expander("Dataset Profile Summary", expanded=True):
         col1, col2 = st.columns(2)
         
         with col1:
@@ -205,14 +216,12 @@ if uploaded_file is not None:
         with st.expander(f"📋 {rec['title']} (Relevance: {rec['score']:.2f})", expanded=i==0):
             st.write(rec['description'])
             
-            toggle_key = 'show_why_' + rec['type'] + '_' + str(i)
-            if toggle_key not in st.session_state:
-                st.session_state[toggle_key] = False
+            show_explanation = st.checkbox(
+                "Show explanation",
+                key=f"explain_{rec['type']}_{i}"
+            )
 
-            if st.button("📖 Why this recommendation?", key=f"why_btn_{rec['type']}_{i}"):
-                st.session_state[toggle_key] = not st.session_state[toggle_key]
-
-            if st.session_state[toggle_key]:
+            if show_explanation:
                 st.markdown("---")
                 exp = explain_recommendation(rec, data_profile, st.session_state.user_preferences)
                 for reason in exp['reasons']:
@@ -246,11 +255,10 @@ if uploaded_file is not None:
                     default=default_selection
                 )
                 
+                if not selected_cols:
+                    st.caption("Select columns above to generate a visualization.")
+                
                 if selected_cols:
-                    # Track this as a selection
-                    preference_learner.track_interaction(rec, 'selected', pd.Timestamp.now())
-                    st.session_state.user_preferences = preference_learner.preference_weights
-                    
                     # Add visualization type selection
                     visualization_options = {}
                     if rec['type'] == 'correlation':
@@ -289,30 +297,24 @@ if uploaded_file is not None:
             # User feedback
             col1, col2 = st.columns([1, 1])
             with col1:
-                if st.button("👍 Useful", key=f"useful_{i}"):
+                if st.button(f"👍 Useful — {rec['title']}", key=f"useful_{i}"):
                     preference_learner.track_interaction(rec, 'liked', pd.Timestamp.now())
                     st.session_state.user_preferences = preference_learner.preference_weights
+                    st.session_state.recommendations = recommendation_engine.generate_recommendations(
+                        data_profile,
+                        st.session_state.user_preferences
+                    )
                     st.toast("Thanks! Prioritizing similar analyses.", icon="👍")
                     
-                    # Update recommendations based on new preferences
-                    st.session_state.recommendations = recommendation_engine.generate_recommendations(
-                        data_profile, 
-                        st.session_state.user_preferences
-                    )
-                    st.rerun()
-                    
             with col2:
-                if st.button("👎 Not Useful", key=f"not_useful_{i}"):
+                if st.button(f"👎 Not Useful — {rec['title']}", key=f"not_useful_{i}"):
                     preference_learner.track_interaction(rec, 'disliked', pd.Timestamp.now())
                     st.session_state.user_preferences = preference_learner.preference_weights
-                    st.toast("Noted. Showing fewer analyses like this.", icon="👎")
-                    
-                    # Update recommendations based on new preferences
                     st.session_state.recommendations = recommendation_engine.generate_recommendations(
-                        data_profile, 
+                        data_profile,
                         st.session_state.user_preferences
                     )
-                    st.rerun()
+                    st.toast("Noted. Showing fewer analyses like this.", icon="👎")
     
 else:
     # Display welcome message and instructions when no file is uploaded
@@ -333,44 +335,13 @@ else:
     Upload a CSV, Excel or JSON file using the file uploader in the sidebar.
     """)
     
-    # Sample datasets section
-    st.subheader("Don't have a dataset? Try one of these examples:")
-    
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        st.markdown("""
-        **Iris Flower Dataset**
-        - 150 samples of iris flowers
-        - Features: sepal length/width, petal length/width
-        - Classification task
-        
-        [Download CSV](https://raw.githubusercontent.com/mwaskom/seaborn-data/master/iris.csv)
-        """)
-        
-    with col2:
-        st.markdown("""
-        **Titanic Passengers**
-        - 891 passengers from the Titanic
-        - Features: age, class, fare, gender
-        - Missing values and categorical data
-        
-        [Download CSV](https://raw.githubusercontent.com/datasciencedojo/datasets/master/titanic.csv)
-        """)
-        
-    with col3:
-        st.markdown("""
-        **Auto MPG Dataset**
-        - 398 automobiles 
-        - Features: mpg, cylinders, horsepower
-        - Regression task with outliers
-        
-        [Download CSV](https://raw.githubusercontent.com/plotly/datasets/master/auto-mpg.csv)
-        """)
+    st.info(
+        "Supported formats: **CSV**, **XLSX**, **XLS**, **JSON** — "
+        "files up to ~50 MB recommended."
+    )
 
 # Footer
 st.markdown("---")
-st.markdown(
-    "EDA Assistant • Built with Streamlit • "
-    f"Last updated: {datetime.now().strftime('%Y-%m-%d')}"
-) 
+st.markdown("EDA Assistant")
+
+ 
