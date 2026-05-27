@@ -29,7 +29,6 @@ from visualization_generator import VisualizationGenerator
 from constants import DEFAULT_PREFERENCES, ANALYSIS_GOALS
 from data_quality import QualityReport
 import llm_adapter
-from nlq_engine import match_query, format_result
 
 # Page configuration
 st.set_page_config(
@@ -83,9 +82,6 @@ if '_active_goal' not in st.session_state:
 
 if '_expert_mode' not in st.session_state:
     st.session_state._expert_mode = False
-
-if '_nlq_match' not in st.session_state:
-    st.session_state._nlq_match = None
 
 # Initialize components
 data_processor = DataProcessor()
@@ -218,7 +214,12 @@ with st.sidebar:
         value=st.session_state.get('ai_enabled', default_ai_enabled),
         help="Use a local model (Ollama) or a free remote API"
     )
-    if st.session_state.ai_enabled:
+    st.session_state._chat_enabled = st.toggle(
+        "Ask anything about your data (chat)",
+        value=st.session_state.get('_chat_enabled', False),
+        help="Chat with the LLM about your dataset — works with the same provider"
+    )
+    if st.session_state.ai_enabled or st.session_state.get('_chat_enabled'):
         env_provider = os.environ.get("LLM_PROVIDER", "local")
         provider = st.selectbox(
             "Provider",
@@ -412,13 +413,32 @@ if uploaded_file is not None:
             st.caption(" | ".join(parts))
         st.divider()
         
-        # ── NLQ Bar ────────────────────────────────────────────
-        nlq_query = st.text_input("🔍 Ask about your data (e.g., 'show me outliers')", key="_nlq_input")
-        if nlq_query:
-            match, conf = match_query(nlq_query)
-            st.session_state._nlq_match = format_result(match, conf)
-            if match:
-                st.info(f"**Try:** {st.session_state._nlq_match['title']} (confidence: {conf:.0%})")
+        # ── Chat with your data ────────────────────────────────
+        if st.session_state.get('_chat_enabled'):
+            st.markdown("#### 💬 Ask anything about your data")
+            if '_chat_history' not in st.session_state:
+                st.session_state._chat_history = []
+            for msg in st.session_state._chat_history:
+                with st.chat_message(msg["role"]):
+                    st.markdown(msg["content"])
+            chat_input = st.chat_input("Ask a question about your dataset...", key="_data_chat")
+            if chat_input:
+                st.session_state._chat_history.append({"role": "user", "content": chat_input})
+                provider = st.session_state.get('_ai_provider', 'local')
+                model = st.session_state.get('_llm_model', llm_adapter.DEFAULT_MODEL)
+                endpoint = st.session_state.get('_llm_endpoint')
+                key_map = {"openrouter": "OPENROUTER_API_KEY", "groq": "GROQ_API_KEY", "custom": "CUSTOM_API_KEY"}
+                api_key = os.environ.get(key_map.get(provider, ""), "")
+                result = llm_adapter.chat_with_data(
+                    chat_input, data_profile, df,
+                    conversation_history=st.session_state._chat_history[:-1],
+                    provider=provider, model=model, endpoint=endpoint, api_key=api_key
+                )
+                if result.get("ok"):
+                    st.session_state._chat_history.append({"role": "assistant", "content": result["text"]})
+                else:
+                    st.session_state._chat_history.append({"role": "assistant", "content": f"⚠️ {result.get('error', 'LLM unavailable')}"})
+                st.rerun()
         
         # ── Global Exploration Summary ─────────────────────────
         if st.session_state.interaction_history:
@@ -611,16 +631,13 @@ if uploaded_file is not None:
                 
                 # Set default selection based on recommendation type
                 if rec['type'] == 'correlation':
-                    # For correlation, select all numerical columns by default (up to 5)
                     default_selection = column_options[:min(5, len(column_options))]
                 elif rec['type'] == 'categorical':
-                    # For categorical, start with low cardinality columns
                     cardinality = st.session_state.get('_cardinality', {})
                     card_subset = {col: cardinality.get(col, df[col].nunique()) for col in column_options}
                     sorted_cols = sorted(card_subset.items(), key=lambda x: x[1])
                     default_selection = [col for col, _ in sorted_cols[:min(3, len(sorted_cols))]]
                 else:
-                    # For other types, select first 2 columns by default
                     default_selection = column_options[:min(2, len(column_options))]
                     
                 selected_cols = st.multiselect(

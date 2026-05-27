@@ -4,8 +4,7 @@ __pycache__/
 .DS_Store
 
 # Internal engineering artifacts — not for public repo
-AGENTS.md
-engineering_memory.md
+
 
 # Environment variables (API keys)
 .env

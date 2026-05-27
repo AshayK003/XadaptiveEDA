@@ -313,6 +313,114 @@ COLUMN_NAMING_SYSTEM_PROMPT = (
     "old_column_name → suggested_name"
 )
 
+
+# ── NLQ query classifier ──────────────────────────────────────
+
+NLQ_SYSTEM_PROMPT = (
+    "You are a query classifier for an exploratory data analysis tool. "
+    "Given a user's natural language question about their dataset, classify it into "
+    "exactly one of these analysis types:\n"
+    "- distribution (asking about value spread, shape, histogram, range, skewness)\n"
+    "- correlation (asking about relationships, associations, pairwise connections between columns)\n"
+    "- missing_values (asking about nulls, gaps, empty data, blanks)\n"
+    "- categorical (asking about categories, segments, groups, bar charts, frequencies)\n"
+    "- outliers (asking about anomalies, extremes, unusual values, spikes)\n"
+    "- time_series (asking about trends over time, seasonality, dates, chronological patterns)\n\n"
+    "If the query mentions specific column names, extract them from the provided column list.\n\n"
+    "Respond with valid JSON ONLY (no markdown, no extra text):\n"
+    '{"type": "analysis_type", "confidence": 0.0-1.0, "columns": ["col1", "col2"]}\n'
+    'If no type matches, use "type": null, "confidence": 0.0, "columns": []'
+)
+
+
+def classify_nlq(query, columns=None, model=DEFAULT_MODEL, provider="local",
+                 host=DEFAULT_HOST, port=DEFAULT_PORT,
+                 api_key="", endpoint=""):
+    """Use LLM to classify a natural language query into an analysis type.
+
+    Returns dict with keys: type, confidence, columns.
+    Falls back gracefully if LLM is unreachable.
+    """
+    cols_hint = f"\nAvailable columns: {', '.join(columns[:20])}" if columns else ""
+    user_prompt = (
+        f'Classify this user query: "{query}"'
+        f'{cols_hint}'
+    )
+
+    if provider == "local":
+        payload = json.dumps({
+            "model": model,
+            "prompt": user_prompt,
+            "system": NLQ_SYSTEM_PROMPT,
+            "stream": False,
+            "options": {"num_predict": 256, "temperature": 0.1}
+        }).encode()
+        try:
+            url = f"http://{host}:{port}/api/generate"
+            req = urllib.request.Request(url, data=payload, method="POST")
+            req.add_header("Content-Type", "application/json")
+            with _urlopen_retry(req, LOCAL_TIMEOUT) as resp:
+                result = json.loads(resp.read())
+                text = result.get("response", "").strip()
+        except Exception:
+            return None
+    else:
+        payload = json.dumps({
+            "model": model,
+            "messages": [
+                {"role": "system", "content": NLQ_SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt}
+            ],
+            "max_tokens": 256,
+            "temperature": 0.1
+        }).encode()
+        try:
+            req = urllib.request.Request(endpoint, data=payload, method="POST")
+            req.add_header("Content-Type", "application/json")
+            req.add_header("Authorization", f"Bearer {api_key}")
+            with _urlopen_retry(req, TIMEOUT) as resp:
+                result = json.loads(resp.read())
+                text = result["choices"][0]["message"]["content"].strip()
+        except Exception:
+            return None
+
+    # Parse JSON from LLM response — handle possible markdown fences
+    text = text.strip()
+    if text.startswith("```"):
+        text = text.split("\n", 1)[-1]
+        text = text.rsplit("```", 1)[0]
+    text = text.strip()
+    if not text.startswith("{"):
+        return None
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        return None
+
+    valid_types = {'distribution', 'correlation', 'missing_values',
+                   'categorical', 'outliers', 'time_series'}
+    atype = parsed.get("type")
+    if atype is not None and atype not in valid_types:
+        return None
+
+    # Filter extracted columns against the available list
+    extracted = parsed.get("columns", [])
+    if columns and extracted:
+        col_lower = {c.lower(): c for c in columns}
+        validated = []
+        for ec in extracted:
+            if ec in columns:
+                validated.append(ec)
+            elif ec.lower() in col_lower:
+                validated.append(col_lower[ec.lower()])
+        extracted = validated
+
+    return {
+        "type": atype,
+        "confidence": min(1.0, max(0.0, parsed.get("confidence", 0.5))),
+        "columns": extracted,
+    }
+
 def suggest_column_names(df, unnamed_cols, model=DEFAULT_MODEL, provider="local",
                          host=DEFAULT_HOST, port=DEFAULT_PORT,
                          api_key="", endpoint=""):
@@ -384,3 +492,155 @@ def suggest_column_names(df, unnamed_cols, model=DEFAULT_MODEL, provider="local"
     if not names:
         return {"ok": False, "error": "Could not parse LLM response"}
     return {"ok": True, "names": names}
+
+
+# ── Chat with your data ───────────────────────────────────────
+
+CHAT_SYSTEM_PROMPT = (
+    "You are a data analysis assistant. You have access to the following dataset. "
+    "Answer the user's questions using ONLY the statistics and context provided below. "
+    "Be specific — reference actual column names, numbers, and patterns. "
+    "If the data doesn't contain enough information, say so clearly. "
+    "Do not fabricate data. Keep answers concise (3-5 sentences)."
+)
+
+
+def _build_dataset_context(data_profile, df):
+    """Build a text summary of the dataset for the LLM context."""
+    parts = []
+    shape = data_profile.get('shape', df.shape)
+    parts.append(f"Dataset: {shape[0]:,} rows × {shape[1]} columns\n")
+
+    dtypes = data_profile.get('dtypes', {})
+    if dtypes:
+        type_groups = {}
+        for col, t in dtypes.items():
+            type_groups.setdefault(t, []).append(col)
+        type_lines = []
+        for t, cols in sorted(type_groups.items()):
+            type_lines.append(f"  {', '.join(cols)} ({t})")
+        parts.append("Columns:\n" + "\n".join(type_lines) + "\n")
+
+    missing = data_profile.get('missing_percentage', {})
+    missing_with = {c: p for c, p in missing.items() if p > 0}
+    if missing_with:
+        top = sorted(missing_with.items(), key=lambda x: -x[1])[:5]
+        parts.append(f"Missing data: {', '.join(f'{c}={p:.1f}%' for c, p in top)}\n")
+
+    num_cols = data_profile.get('numerical_cols', [])
+    if num_cols:
+        stats = []
+        for col in num_cols[:10]:
+            s = df[col].dropna()
+            if not s.empty:
+                stats.append(f"  {col}: min={s.min():.4g}, max={s.max():.4g}, mean={s.mean():.4g}, "
+                             f"median={s.median():.4g}, missing={missing.get(col, 0):.1f}%")
+        if stats:
+            parts.append("Numerical stats:\n" + "\n".join(stats) + "\n")
+
+    cat_cols = data_profile.get('categorical_cols', [])
+    if cat_cols:
+        cat_stats = []
+        for col in cat_cols[:10]:
+            n = df[col].nunique()
+            top_vals = df[col].value_counts().nlargest(3).index.tolist()
+            top_str = ", ".join(repr(v) for v in top_vals)
+            cat_stats.append(f"  {col}: {n} unique values, top: {top_str}")
+        if cat_stats:
+            parts.append("Categorical columns:\n" + "\n".join(cat_stats) + "\n")
+
+    outliers = data_profile.get('has_outliers', {})
+    if outliers:
+        parts.append(f"Outlier columns: {', '.join(f'{c} ({p:.1f}%)' for c, p in list(outliers.items())[:5])}\n")
+
+    skew = data_profile.get('skewness', {})
+    skewed = {c: s for c, s in skew.items() if s is not None and abs(s) > 1}
+    if skewed:
+        parts.append(f"Skewed columns: {', '.join(f'{c} ({s:.2f})' for c, s in list(skewed.items())[:5])}\n")
+
+    try:
+        sample = df.head(3)
+        parts.append(f"First 3 rows:\n{sample.to_string(index=False)}\n")
+    except Exception:
+        pass
+
+    return "\n".join(parts)
+
+
+def chat_with_data(query, data_profile, df, conversation_history=None,
+                   model=DEFAULT_MODEL, provider="local",
+                   host=DEFAULT_HOST, port=DEFAULT_PORT,
+                   api_key="", endpoint=""):
+    """Answer a free-form user question about the dataset using the LLM.
+
+    Args:
+        query: User's question string.
+        data_profile: Profile dict from DataProcessor.
+        df: The DataFrame.
+        conversation_history: Optional list of {"role": str, "content": str} dicts.
+        provider/model/host/port/api_key/endpoint: LLM connection settings.
+
+    Returns:
+        {"ok": True, "text": str} or {"ok": False, "error": str}
+    """
+    context = _build_dataset_context(data_profile, df)
+    user_prompt = f"Dataset context:\n{context}\n\nUser question: {query}"
+
+    messages = [{"role": "system", "content": CHAT_SYSTEM_PROMPT}]
+    if conversation_history:
+        for msg in conversation_history[-6:]:  # last 6 exchanges
+            if msg.get("role") in ("user", "assistant"):
+                messages.append(msg)
+    messages.append({"role": "user", "content": user_prompt})
+
+    if provider == "local":
+        full_prompt = "\n".join(
+            (m["content"] if m["role"] == "user" else
+             f"System: {m['content']}" if m["role"] == "system" else
+             f"Assistant: {m['content']}")
+            for m in messages
+        )
+        payload = json.dumps({
+            "model": model,
+            "prompt": full_prompt,
+            "stream": False,
+            "options": {"num_predict": 1024, "temperature": 0.3}
+        }).encode()
+        try:
+            url = f"http://{host}:{port}/api/generate"
+            req = urllib.request.Request(url, data=payload, method="POST")
+            req.add_header("Content-Type", "application/json")
+            with _urlopen_retry(req, LOCAL_TIMEOUT) as resp:
+                result = json.loads(resp.read())
+                return {"ok": True, "text": result.get("response", "").strip()}
+        except urllib.error.URLError:
+            return {"ok": False, "error": "Ollama not reachable — is it running?"}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+    else:
+        payload = json.dumps({
+            "model": model,
+            "messages": messages,
+            "max_tokens": 1024,
+            "temperature": 0.3
+        }).encode()
+        try:
+            req = urllib.request.Request(endpoint, data=payload, method="POST")
+            req.add_header("Content-Type", "application/json")
+            req.add_header("Authorization", f"Bearer {api_key}")
+            with _urlopen_retry(req, TIMEOUT) as resp:
+                result = json.loads(resp.read())
+                text = result["choices"][0]["message"]["content"].strip()
+                return {"ok": True, "text": text}
+        except urllib.error.HTTPError as e:
+            body = e.read().decode(errors="replace") if e.fp else ""
+            msg = f"API returned {e.code}"
+            if "401" in str(e.code):
+                msg = "Invalid API key"
+            elif "402" in str(e.code) or "insufficient_quota" in body:
+                msg = "API quota exhausted"
+            return {"ok": False, "error": msg}
+        except urllib.error.URLError:
+            return {"ok": False, "error": "API not reachable"}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
