@@ -1,69 +1,136 @@
-# Exploratory Data Analysis Assistant
+# EDA Assistant
 
-A Streamlit tool that profiles datasets and recommends analyses based on data characteristics and user-set priorities.
+A Streamlit application that profiles datasets, scores six analysis types by relevance, and generates plotly visualizations. Analysis rankings incorporate both dataset characteristics and user-set priority weights.
 
-## Overview
+## Quick Start
 
-Upload a CSV, Excel, or JSON file. The tool profiles your data (column types, missing values, outliers, skewness), ranks six analysis types by relevance, and lets you generate visualizations. You can adjust priority sliders or give thumbs-up/down to shift future recommendations.
-
-## Features
-
-- Automatic data profiling (types, missing values, outliers, skewness, dates)
-- Analysis recommendations ranked by data relevance × your priorities
-- Manual priority adjustment via sliders
-- Visualizations for distribution, correlation, missing values, categorical, outliers, time series
-- Priority tracking across your session (resets on page reload)
-- Supports CSV, Excel, JSON
-
-## Installation
-
-```
+```bash
 python -m venv venv
-.\venv\Scripts\activate    # Windows
+.\venv\Scripts\activate      # Windows
 pip install -r requirements.txt
-```
-
-## Usage
-
-```
 streamlit run app.py
 ```
 
-Open http://localhost:8501 in your browser.
+Open http://localhost:8501.
 
 ## How It Works
 
-### 1. Data Profiling
+### Data Flow
 
-On upload, the tool scans the dataset and records:
-- Numerical vs categorical column types
-- Missing value counts and percentages
-- Outlier detection via IQR
-- Distribution skewness
-- Date/time column candidates
+```
+Upload file → DataProcessor.profile_dataset() → profile dict
+                                                      ↓
+User priorities ──→ RecommendationEngine.generate_recommendations() → ranked list
+                         ↓
+              User selects analysis → VisualizationGenerator → plotly figure
+                         ↓
+              User clicks 👍/👎 → PreferenceTracker → weights adjusted
+```
 
-### 2. Recommendation Scoring
+### Scoring Formula
 
-Each of six analysis types gets a score: `base_score × data_relevance × user_priority`. Results are ranked highest to lowest.
+Each analysis type gets a score: `base_score × data_relevance × user_priority`
 
-### 3. Priority Tracking
+- **base_score**: fixed per type (0.6–0.9), reflects general usefulness
+- **data_relevance**: computed from actual dataset characteristics (0.5–1.0)
+- **user_priority**: slider value or feedback-adjusted weight (0.1–1.0)
 
-Your interactions (likes, dislikes, column selections) adjust priority weights up or down. You can also set priorities directly with sliders. This is session-only — nothing is saved to disk.
+Results sorted descending, top 5 displayed.
 
-### 4. Visualization
+## Six Analysis Types
 
-Select columns and generate charts using matplotlib/seaborn or plotly. Available chart types depend on the analysis.
+| Type | Trigger | Default Chart |
+|---|---|---|
+| **Distribution** | Any numerical column | Histogram + Boxplot |
+| **Correlation** | ≥2 numerical columns | Triangular + Full heatmap |
+| **Missing Values** | Any null values | Bar chart of null % by column |
+| **Categorical** | Any categorical column | Bar or Pie chart |
+| **Outliers** | IQR-detectable outliers | Boxplot |
+| **Time Series** | Date/time column detected | Line chart |
 
-## System Components
+## Data Profile Structure
 
-| Module | Purpose |
-|--------|---------|
-| `data_processor.py` | File parsing, dataset profiling |
-| `recommendation_engine.py` | Scores and ranks analyses |
-| `preference_tracker.py` | Adjusts weights based on feedback |
-| `insight_generator.py` | Generates text from actual data values |
-| `visualization_generator.py` | Creates matplotlib/plotly charts |
+`DataProcessor.profile_dataset(df)` returns a dict with these keys:
 
-## License
+| Key | Type | Description |
+|---|---|---|
+| `shape` | `(int, int)` | Row and column count |
+| `dtypes` | `dict[str, str]` | Column name → dtype string |
+| `missing_values` | `dict[str, int]` | Column name → null count |
+| `missing_percentage` | `dict[str, float]` | Column name → null % |
+| `numerical_cols` | `list[str]` | Numerical column names |
+| `categorical_cols` | `list[str]` | Object/category column names |
+| `unique_counts` | `dict[str, int]` | Column name → nunique() |
+| `skewness` | `dict[str, float\|None]` | Column name → skew() |
+| `correlation_exists` | `bool` | `len(numerical_cols) > 1` |
+| `time_series_candidates` | `list[str]` | Columns matching date patterns |
+| `categorical_cardinality` | `dict[str, int]` | Categorical column → nunique() |
+| `has_outliers` | `dict[str, float]` | Column → % rows beyond 1.5×IQR |
 
-MIT
+## Priority Tracking
+
+**`PreferenceTracker`** adjusts weights by fixed deltas:
+
+| Action | Delta | Clamp |
+|---|---|---|
+| 👍 Useful | +0.10 | [0.1, 1.0] |
+| Column selection | +0.05 | [0.1, 1.0] |
+| 👎 Not Useful | −0.10 | [0.1, 1.0] |
+
+All weights are session-only (lost on page reload). Manual slider overrides are logged but not decayed.
+
+## Insight Generation
+
+`insight_generator.py` produces text from actual data values — no pre-written templates. Examples:
+
+- `"Dataset has 1,234 rows and 15 columns."`
+- `"Missing values detected — 'age' has the most (40.2%)."`
+- `"'revenue' is right-skewed (skewness=2.34)."`
+
+## Visualization
+
+All charts use **plotly** (interactive: zoom, pan, hover, download as PNG). No matplotlib or seaborn dependency.
+
+Supported chart types by analysis:
+
+| Analysis | Chart Types |
+|---|---|
+| Distribution | Histogram, Boxplot |
+| Correlation | Heatmap (triangular + full) |
+| Missing Values | Bar |
+| Categorical | Bar, Pie |
+| Outliers | Boxplot |
+| Time Series | Line |
+
+## Project Structure
+
+```
+├── app.py                    # Streamlit UI (sidebar, recommendations, viz)
+├── data_processor.py         # File loading, dataset profiling
+├── recommendation_engine.py  # Scoring and ranking logic
+├── preference_learner.py     # PreferenceTracker: feedback → weight adjustment
+├── insight_generator.py      # Data-driven text generation
+├── visualization_generator.py# Plotly chart creation
+├── constants.py              # Shared type lists and default values
+├── requirements.txt
+└── README.md
+```
+
+## Dependencies
+
+| Package | Version | Purpose |
+|---|---|---|
+| streamlit | ≥1.36 | Web UI framework |
+| pandas | ≥1.5 | Data processing |
+| numpy | ≥1.23 | Numerical operations |
+| plotly | ≥5.10 | Interactive charts |
+| openpyxl | ≥3.1 | Excel (.xlsx) reading |
+| xlrd | ≥2.0 | Legacy Excel (.xls) reading |
+
+## Limitations
+
+- Session-only state: preferences reset on page reload
+- No ML or AI: scoring uses fixed heuristics, not learned models
+- Time series analysis plots against the first numerical column only
+- Correlation uses pearson by default (spearman/kendall not exposed in UI)
+- Large datasets (>100k rows) may be slow due to full in-memory processing
