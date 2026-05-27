@@ -111,19 +111,26 @@ class VisualizationGenerator:
                 fig.update_layout(xaxis={'categoryorder': 'total descending'}, height=450)
             return fig
 
-        fig = make_subplots(rows=len(columns), cols=1,
-                            subplot_titles=[f"Distribution of {col}" for col in columns])
-        for i, col in enumerate(columns):
-            vc = df[col].value_counts().nlargest(max_categories)
-            c = colors[i % len(colors)]
-            if plot_type == 'pie':
+        if plot_type == 'pie':
+            fig = make_subplots(rows=1, cols=len(columns),
+                                subplot_titles=[f"Distribution of {col}" for col in columns],
+                                specs=[[{"type": "domain"}] * len(columns)])
+            for i, col in enumerate(columns):
+                vc = df[col].value_counts().nlargest(max_categories)
+                c = colors[i % len(colors)]
                 fig.add_trace(go.Pie(values=vc.values, labels=vc.index, name=col,
                                      textposition='inside', textinfo='percent+label',
-                                     marker_colors=[c] * len(vc)), row=i+1, col=1)
-            else:
+                                     marker_colors=[c] * len(vc)), row=1, col=i+1)
+            fig.update_layout(height=400, showlegend=False)
+        else:
+            fig = make_subplots(rows=len(columns), cols=1,
+                                subplot_titles=[f"Distribution of {col}" for col in columns])
+            for i, col in enumerate(columns):
+                vc = df[col].value_counts().nlargest(max_categories)
+                c = colors[i % len(colors)]
                 fig.add_trace(go.Bar(x=vc.index, y=vc.values, name=col, text=vc.values,
                                      textposition='auto', marker_color=c), row=i+1, col=1)
-        fig.update_layout(height=400 * len(columns), showlegend=False)
+            fig.update_layout(height=400 * len(columns), showlegend=False)
         return fig
 
     def _create_outliers_plot(self, df, columns, **kwargs):

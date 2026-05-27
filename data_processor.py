@@ -2,11 +2,15 @@ import pandas as pd
 import numpy as np
 import os
 import warnings
+from data_quality import cleanse as _cleanse, QualityReport
+
 
 class DataProcessor:
     def load_data(self, file_or_path):
         """Load data from various sources and return DataFrame"""
         if isinstance(file_or_path, str):
+            if os.path.getsize(file_or_path) == 0:
+                raise ValueError("File is empty")
             file_extension = os.path.splitext(file_or_path)[1].lower()
             if file_extension == '.csv':
                 return pd.read_csv(file_or_path)
@@ -28,7 +32,11 @@ class DataProcessor:
             return pd.read_json(file_or_path)
         else:
             raise ValueError(f"Unsupported file format: {file_extension}")
-    
+
+    def cleanse(self, df: pd.DataFrame) -> tuple[pd.DataFrame, QualityReport]:
+        """Normalize, validate, and report on data quality. Returns (cleaned_df, report)."""
+        return _cleanse(df)
+
     def profile_dataset(self, df):
         """Extract key dataset characteristics"""
         if df.empty:
@@ -84,46 +92,40 @@ class DataProcessor:
         
         # Then check object columns for convertible date formats
         for col in df.select_dtypes(include=['object']).columns:
-            if col not in time_series_candidates:  # Skip already identified columns
-                # Sample the first non-null value to check
-                sample_val = df[col].dropna().iloc[0] if not df[col].dropna().empty else None
-                
-                if sample_val:
-                    # Check if it's a timestamp string
-                    date_detected = False
+            if col in time_series_candidates:  # Skip already identified columns
+                continue
+            
+            sample_vals = df[col].dropna()
+            if sample_vals.empty:
+                continue
+            
+            sample_val = str(sample_vals.iloc[0])
+            # Quick heuristic: must have digits, be at least 6 chars, and contain date-like separators
+            if not any(c.isdigit() for c in sample_val) or len(sample_val) < 6:
+                continue
+            
+            date_detected = False
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                for date_format in date_formats:
+                    try:
+                        pd.to_datetime(sample_val, format=date_format)
+                        date_detected = True
+                        break
+                    except Exception:
+                        continue
+            
+            if date_detected or (any(x in sample_val.lower() for x in ['-', '/', ':']) and len(sample_val) >= 8):
+                try:
                     with warnings.catch_warnings():
                         warnings.simplefilter("ignore")
-                        for date_format in date_formats:
-                            try:
-                                pd.to_datetime(sample_val, format=date_format)
-                                date_detected = True
-                                break
-                            except Exception:
-                                continue
-                    
-                    # If format is detected or has date-like patterns, try full column
-                    if date_detected or (any(x in str(sample_val).lower() for x in ['-', '/', ':']) and len(str(sample_val)) >= 8):
-                        try:
-                            with warnings.catch_warnings():
-                                warnings.simplefilter("ignore")
-                                # If at least 80% of non-null values can be converted to datetime
-                                null_pct = df[col].isnull().mean()
-                                
-                                # Use better parameters for datetime conversion
-                                convert_attempt = pd.to_datetime(
-                                    df[col], 
-                                    errors='coerce',
-                                    dayfirst=True,
-                                    cache=True
-                                )
-                                
-                                new_null_pct = convert_attempt.isnull().mean()
-                                
-                                # Only add if at least 80% can be converted
-                                if new_null_pct - null_pct < 0.2:
-                                    time_series_candidates.append(col)
-                        except Exception:
-                            pass
+                        null_pct = df[col].isnull().mean()
+                        convert_attempt = pd.to_datetime(df[col], errors='coerce', dayfirst=True, cache=True)
+                        new_null_pct = convert_attempt.isnull().mean()
+                        if new_null_pct - null_pct < 0.2:
+                            time_series_candidates.append(col)
+                except Exception:
+                    pass
         
         # Return profile dictionary
         return {

@@ -8,9 +8,7 @@ class PreferenceTracker:
 
     ADJUSTMENTS = {
         'liked': 0.10,
-        'selected': 0.05,
         'disliked': -0.10,
-        'ignored': -0.02,
     }
 
     def __init__(self):

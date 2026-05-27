@@ -78,13 +78,14 @@ class RecommendationEngine:
                 applicable_columns = self._get_applicable_columns(analysis_type, data_profile)
                 
                 if applicable_columns:
+                    data_factors = self._get_data_factors(analysis_type, data_profile)
                     recommendations.append({
                         'type': analysis_type,
                         'title': f"{analysis_type.title()} Analysis",
                         'description': properties['description'],
                         'techniques': properties['techniques'],
                         'score': final_score,
-                        'data_factors': self._get_data_factors(analysis_type, data_profile),
+                        'data_factors': data_factors,
                         'columns': applicable_columns
                     })
         
@@ -159,6 +160,39 @@ class RecommendationEngine:
         
         return 0.5
     
+    def _get_data_factors(self, analysis_type, data_profile):
+        factors = []
+        num = len(data_profile.get('numerical_cols', []))
+        cat = len(data_profile.get('categorical_cols', []))
+        if analysis_type == 'distribution':
+            if num:
+                factors.append(f"{num} numerical column{'s' if num != 1 else ''}")
+            skewed = sum(1 for s in data_profile.get('skewness', {}).values() if s is not None and abs(s) > 1)
+            if skewed:
+                factors.append(f"{skewed} skewed distribution{'s' if skewed != 1 else ''}")
+        elif analysis_type == 'correlation':
+            if num >= 2:
+                factors.append(f"{num} numerical columns available for pairwise analysis")
+        elif analysis_type == 'missing_values':
+            missing = [c for c, v in data_profile.get('missing_percentage', {}).items() if v > 0]
+            if missing:
+                factors.append(f"{len(missing)} column{'s' if len(missing) != 1 else ''} with missing data")
+        elif analysis_type == 'categorical':
+            if cat:
+                factors.append(f"{cat} categorical column{'s' if cat != 1 else ''}")
+            high_card = sum(1 for c in data_profile.get('categorical_cardinality', {}).values() if c > 20)
+            if high_card:
+                factors.append(f"{high_card} high-cardinality column{'s' if high_card != 1 else ''}")
+        elif analysis_type == 'outliers':
+            o_cols = len(data_profile.get('has_outliers', {}))
+            if o_cols:
+                factors.append(f"{o_cols} column{'s' if o_cols != 1 else ''} with outlier flags")
+        elif analysis_type == 'time_series':
+            ts = data_profile.get('time_series_candidates', [])
+            if ts:
+                factors.append(f"{len(ts)} time-related column{'s' if len(ts) != 1 else ''}")
+        return factors
+
     def _get_applicable_columns(self, analysis_type, data_profile):
         """Get columns applicable for a specific analysis type"""
         if analysis_type == 'distribution':
@@ -181,52 +215,4 @@ class RecommendationEngine:
         
         return []
     
-    def _get_data_factors(self, analysis_type, data_profile):
-        """Get data factors that influenced recommendation"""
-        factors = []
-        
-        if analysis_type == 'distribution':
-            # Check for skewness
-            skewed_cols = [col for col, skew in data_profile['skewness'].items() 
-                          if skew is not None and abs(skew) > 1]
-            if skewed_cols:
-                factors.append('skewed_distribution')
-            
-            # Check for multi-modal possibilities
-            factors.append('distribution_analysis')
-            
-        elif analysis_type == 'correlation':
-            factors.append('multivariate_numerical')
-            
-        elif analysis_type == 'missing_values':
-            # Check for significant missing values
-            high_missing = [col for col, pct in data_profile['missing_percentage'].items() 
-                           if pct > 5]
-            if high_missing:
-                factors.append('high_missing_values')
-            else:
-                factors.append('some_missing_values')
-                
-        elif analysis_type == 'categorical':
-            # Check for cardinality levels
-            low_card = [col for col, count in data_profile['categorical_cardinality'].items() 
-                       if 2 <= count <= 5]
-            med_card = [col for col, count in data_profile['categorical_cardinality'].items() 
-                       if 6 <= count <= 20]
-            high_card = [col for col, count in data_profile['categorical_cardinality'].items() 
-                        if count > 20]
-            
-            if low_card:
-                factors.append('low_cardinality_categorical')
-            if med_card:
-                factors.append('medium_cardinality_categorical')
-            if high_card:
-                factors.append('high_cardinality_categorical')
-                
-        elif analysis_type == 'outliers':
-            factors.append('has_outliers')
-            
-        elif analysis_type == 'time_series':
-            factors.append('time_based_data')
-            
-        return factors 
+     

@@ -1,6 +1,3 @@
-import pandas as pd
-
-
 TECHNIQUE_DESCRIPTIONS = {
     'histogram': "Histograms show the frequency distribution of values across bins",
     'kde': "Kernel Density Estimation plots the smoothed probability density of the data",
@@ -14,48 +11,6 @@ TECHNIQUE_DESCRIPTIONS = {
     'line': "Line charts display trends by connecting data points in order",
     'seasonal': "Seasonal decomposition separates trend, seasonal patterns, and residuals"
 }
-
-
-def generate_insights(data_profile):
-    """Generate factual observations from the actual data profile values."""
-    insights = []
-
-    shape = data_profile.get('shape', (0, 0))
-    insights.append(f"Dataset has {shape[0]:,} rows and {shape[1]} columns.")
-
-    numerical_cols = data_profile.get('numerical_cols', [])
-    if numerical_cols:
-        insights.append(f"Contains {len(numerical_cols)} numerical column(s): {', '.join(numerical_cols)}.")
-
-    categorical_cols = data_profile.get('categorical_cols', [])
-    if categorical_cols:
-        insights.append(f"Contains {len(categorical_cols)} categorical column(s): {', '.join(categorical_cols)}.")
-
-    missing = data_profile.get('missing_percentage', {})
-    cols_with_missing = {col: pct for col, pct in missing.items() if pct > 0}
-    if cols_with_missing:
-        worst = max(cols_with_missing, key=cols_with_missing.get)
-        insights.append(f"Missing values detected — '{worst}' has the most ({cols_with_missing[worst]:.1f}%).")
-    else:
-        insights.append("No missing values found.")
-
-    outliers = data_profile.get('has_outliers', {})
-    if outliers:
-        worst_out = max(outliers, key=outliers.get)
-        insights.append(f"Potential outliers found — '{worst_out}' has {outliers[worst_out]:.1f}% values beyond 1.5x IQR.")
-
-    skewness = data_profile.get('skewness', {})
-    skewed = {col: s for col, s in skewness.items() if s is not None and abs(s) > 1}
-    if skewed:
-        worst_skew = max(skewed, key=lambda c: abs(skewed[c]))
-        direction = "right" if skewed[worst_skew] > 0 else "left"
-        insights.append(f"'{worst_skew}' is {direction}-skewed (skewness={skewed[worst_skew]:.2f}).")
-
-    time_cols = data_profile.get('time_series_candidates', [])
-    if time_cols:
-        insights.append(f"Potential time-based columns: {', '.join(time_cols)}.")
-
-    return insights
 
 
 def explain_recommendation(recommendation, data_profile, user_preferences):

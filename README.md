@@ -18,12 +18,16 @@ Open http://localhost:8501.
 ### Data Flow
 
 ```
-Upload file → DataProcessor.profile_dataset() → profile dict
-                                                      ↓
-User priorities ──→ RecommendationEngine.generate_recommendations() → ranked list
-                         ↓
+Upload file → load_data() → raw df
+                                ↓
+                        cleanse() → cleaned df + QualityReport
+                                ↓
+                    profile_dataset() → profile dict
+                                            ↓
+        User priorities ──→ generate_recommendations() → ranked list
+                                 ↓
               User selects analysis → VisualizationGenerator → plotly figure
-                         ↓
+                                 ↓
               User clicks 👍/👎 → PreferenceTracker → weights adjusted
 ```
 
@@ -67,6 +71,56 @@ Results sorted descending, top 5 displayed.
 | `categorical_cardinality` | `dict[str, int]` | Categorical column → nunique() |
 | `has_outliers` | `dict[str, float]` | Column → % rows beyond 1.5×IQR |
 
+## Data Quality Pipeline
+
+Every uploaded file passes through a preprocessing pipeline that normalizes, validates, and reports on data quality before profiling and analysis.
+
+### Pipeline Steps
+
+| Step | Operation |
+|------|-----------|
+| Missing token normalization | `"NA", "N/A", "NULL", "", "-", "?", "#N/A"` → `NaN` |
+| Duplicate column renaming | `col, col_1, col_2` suffixes |
+| Column name normalization | lowercase, spaces→underscores, special chars sanitized |
+| Infinite value replacement | `inf`/`-inf` → `NaN` |
+| Empty column removal | Drop all-null columns |
+| Empty row removal | Drop all-null rows |
+| Sparse column detection | Columns >50% missing flagged |
+| Constant column detection | Columns with ≤1 unique value flagged |
+| Mixed-type detection | Object columns with multiple Python types flagged |
+| Type inference | Numeric cast at 90% confidence; datetime on name hints |
+
+### QualityReport
+
+```python
+@dataclass
+class QualityReport:
+    completeness: float              # 0–1 non-null cell ratio
+    uniqueness: float                # 0–1 avg unique/total per column
+    datatype_consistency: dict       # col → {consistent, note}
+    duplicate_rows: int
+    null_percentages: dict[str, float]
+    memory_usage_mb: float
+    overall_quality_score: float      # 0–1 composite (see weights below)
+    warnings: list[str]
+    sparse_columns: list[str]
+    constant_columns: list[str]
+    mixed_type_columns: list[str]
+```
+
+Quality score weights: completeness (0.3), uniqueness (0.2), no duplicates (0.15), no sparse (0.15), no constant (0.10), no mixed-types (0.10).
+
+### UI Feedback
+
+Warning banners appear above the data overview for:
+- Sparse columns (>50% missing)
+- Constant columns (single value)
+- Mixed data types
+- Duplicate rows
+- Large memory usage
+
+A "Data Quality Report" expander shows the full quality score, metrics, and detailed diagnostics.
+
 ## Priority Tracking
 
 **`PreferenceTracker`** adjusts weights by fixed deltas:
@@ -106,7 +160,8 @@ Supported chart types by analysis:
 
 ```
 ├── app.py                    # Streamlit UI (sidebar, recommendations, viz)
-├── data_processor.py         # File loading, dataset profiling
+├── data_processor.py         # File loading, dataset cleansing, profiling
+├── data_quality.py           # DataQualityPipeline, QualityReport, cleanse()
 ├── recommendation_engine.py  # Scoring and ranking logic
 ├── preference_learner.py     # PreferenceTracker: feedback → weight adjustment
 ├── insight_generator.py      # Data-driven text generation
