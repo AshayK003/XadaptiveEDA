@@ -126,12 +126,12 @@ preference_learner.preference_weights = st.session_state.user_preferences
 visualization_generator = VisualizationGenerator()
 
 # App title and description
-st.title("🔍 Exploratory Data Analysis Assistant")
-st.markdown("### Profiles your data, recommends analyses, generates visualizations")
+st.title("🔍 X-Adaptive EDA")
+st.markdown("### Explore. Adapt. Understand.")
 
 # Sidebar for dataset upload and preferences
 with st.sidebar:
-    st.header("Upload Data")
+    st.header("📁 Dataset")
     uploaded_file = st.file_uploader("Choose a dataset file", type=["csv", "xlsx", "xls", "json"])
     
     if uploaded_file is not None:
@@ -290,7 +290,7 @@ with st.sidebar:
                         sp.delete_session(s['id'])
                         st.rerun()
     
-    st.header("AI Analysis")
+    st.header("AI Insights")
     st.session_state._expert_mode = st.toggle("Expert Mode", value=st.session_state.get('_expert_mode', False), help="Show raw data, JSON details, and download options")
     
     st.session_state.ai_enabled = st.toggle(
@@ -299,9 +299,9 @@ with st.sidebar:
         help="Use a local model (Ollama) or a free remote API"
     )
     st.session_state._chat_enabled = st.toggle(
-        "Ask anything about your data (chat)",
+        "💬 Chat with Data",
         value=st.session_state.get('_chat_enabled', False),
-        help="Chat with the LLM about your dataset — works with the same provider"
+        help="Ask questions about your dataset in natural language"
     )
     if st.session_state.ai_enabled or st.session_state.get('_chat_enabled'):
         env_provider = os.environ.get("LLM_PROVIDER", "local")
@@ -932,16 +932,17 @@ if uploaded_file is not None:
 else:
     # Display welcome message and instructions when no file is uploaded
     st.markdown("""
-    ## Welcome to the EDA Assistant!
+    ## Welcome to X-Adaptive EDA
     
-    Upload a dataset to get analysis recommendations, generate charts, and explore your data.
+    An adaptive data analysis tool that learns your priorities and recommends the most relevant analyses.
     
     ### How it works:
     
     1. **Upload a dataset** using the sidebar
-    2. **Browse recommendations** ranked by data characteristics and your priorities
+    2. **Browse smart recommendations** ranked by data characteristics and your priorities
     3. **Give feedback** (👍/👎) to shift future recommendations
     4. **Generate visualizations** with column selection
+    5. **Chat** with your data in natural language
     
     ### Get started:
     
@@ -968,6 +969,6 @@ with col2:
         '</a></div>',
         unsafe_allow_html=True
     )
-st.caption("EDA Assistant")
+st.caption("X-Adaptive EDA — MIT License")
 
  

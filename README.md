@@ -1,6 +1,8 @@
-# EDA Assistant
+# X-Adaptive EDA
 
-A Streamlit application that profiles datasets, scores **eight** analysis types by data relevance × user priority, and generates plotly visualizations. Features a guided workflow (upload → rename → clean → finalize → analyze), AI-powered insights, a chat interface for asking any question about your dataset via LLM, preference tracking with temporal decay, a data quality pipeline, session persistence via SQLite, ε-greedy exploration, rate-limited remote LLM calls, and an NLP query classifier.
+> **Explore. Adapt. Understand.**
+
+An adaptive Streamlit application that profiles datasets, scores **eight** analysis types by data relevance × user priority, and generates plotly visualizations. Features a guided workflow (upload → rename → clean → finalize → analyze), AI-powered insights, a chat interface for asking any question about your dataset via LLM, preference tracking with temporal decay, a data quality pipeline, session persistence via SQLite, ε-greedy exploration, rate-limited remote LLM calls, and an NLP query classifier.
 
 ## Quick Start
 
