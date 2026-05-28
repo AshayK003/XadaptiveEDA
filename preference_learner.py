@@ -96,6 +96,8 @@ class PreferenceTracker:
             return
         now = pd.Timestamp.now()
         for entry in self.interaction_history:
+            if entry.get('action') == 'decay_applied':
+                continue
             ts = entry.get('timestamp')
             if ts is None:
                 continue

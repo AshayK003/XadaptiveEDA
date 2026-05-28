@@ -1,8 +1,6 @@
 import json
 import sqlite3
 import os
-import pandas as pd
-from constants import DEFAULT_PREFERENCES
 
 
 DB_PATH = os.path.expanduser("~/.eda_assistant_sessions.db")
@@ -60,6 +58,8 @@ def save_session(session_id, preferences, interaction_history,
             """, {**data, "session_id": session_id})
         conn.commit()
         return True
+    except sqlite3.Error:
+        return False
     finally:
         conn.close()
 

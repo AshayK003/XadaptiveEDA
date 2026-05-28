@@ -4,6 +4,7 @@ sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 from recommendation_engine import RecommendationEngine
 from insight_generator import global_explanation_summary
 from data_quality import QualityReport
+from data_processor import DataProcessor
 import pandas as pd
 import numpy as np
 
@@ -70,13 +71,16 @@ summary2 = global_explanation_summary(profile, qr, [], prefs)
 assert 'No analysis types explored yet' in summary2
 print("  Handles empty history. Passed!")
 
-# ─── Test 4: Sampling ───
-print("\n=== Test 4: Sampling Concept ===")
-df = pd.DataFrame({'a': range(1000), 'b': range(1000)})
-sampled = df.sample(n=100, random_state=42)
-assert len(sampled) == 100
-assert len(sampled.columns) == 2
-print(f"  Sampled 100 from 1000 rows. Passed!")
+# ─── Test 4: Stratified Sampling ───
+print("\n=== Test 4: Stratified Sampling ===")
+df_sample = pd.DataFrame({
+    'cat': ['A'] * 50 + ['B'] * 50,
+    'val': range(100)
+})
+sampled = DataProcessor.sample_stratified(df_sample, target_rows=20, random_state=42)
+assert len(sampled) <= 20
+assert set(sampled['cat'].unique()).issubset({'A', 'B'})
+print(f"  Sampled {len(sampled)} from 100 rows (both strata preserved). Passed!")
 
 # ─── Test 5: Diversity still correctly applied ───
 print("\n=== Test 5: Diversity + Interestingness Compatibility ===")

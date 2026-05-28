@@ -59,7 +59,7 @@ class DataProcessor:
             }
 
         numerical_cols = df.select_dtypes(include=['number']).columns.tolist()
-        categorical_cols = df.select_dtypes(include=['object', 'category']).columns.tolist()
+        categorical_cols = df.select_dtypes(include=['object', 'category', 'string']).columns.tolist()
         
         # Calculate skewness for numerical columns
         skewness = {}
@@ -94,7 +94,7 @@ class DataProcessor:
                 time_series_candidates.append(col)
         
         # Then check object columns for convertible date formats
-        for col in df.select_dtypes(include=['object']).columns:
+        for col in df.select_dtypes(include=['object', 'string']).columns:
             if col in time_series_candidates:  # Skip already identified columns
                 continue
             
@@ -183,9 +183,8 @@ class DataProcessor:
         """Sample to target_rows using stratified sampling if possible, else random."""
         if len(df) <= target_rows:
             return df
-        # Find good stratification column: low-cardinality categorical
         strata_col = None
-        for col in df.select_dtypes(include=['object', 'category']).columns:
+        for col in df.select_dtypes(include=['object', 'category', 'string']).columns:
             nunique = df[col].nunique()
             if 2 <= nunique <= 20 and nunique < len(df) * 0.5:
                 strata_col = col
@@ -193,7 +192,11 @@ class DataProcessor:
         if strata_col is None:
             return df.sample(n=target_rows, random_state=random_state)
         target_per_stratum = target_rows // df[strata_col].nunique()
-        sampled = df.groupby(strata_col, group_keys=False).apply(
-            lambda x: x.sample(n=min(len(x), max(target_per_stratum, 1)), random_state=random_state)
-        )
-        return sampled.reset_index(drop=True) 
+        indices = []
+        for _, group in df.groupby(strata_col):
+            sampled_idx = group.sample(
+                n=min(len(group), max(target_per_stratum, 1)),
+                random_state=random_state
+            ).index
+            indices.extend(sampled_idx)
+        return df.loc[indices].reset_index(drop=True) 

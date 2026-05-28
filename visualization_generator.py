@@ -7,6 +7,7 @@ from plotly.subplots import make_subplots
 
 class VisualizationGenerator:
     def generate_visualization(self, analysis_type, df, columns, quality_report=None, **kwargs):
+        valid_cols = [c for c in columns if c in df.columns]
         dispatch = {
             'distribution': self._create_distribution_plot,
             'correlation': self._create_correlation_plot,
@@ -19,8 +20,8 @@ class VisualizationGenerator:
         }
         handler = dispatch.get(analysis_type)
         if handler:
-            fig = handler(df, columns, **kwargs)
-            self._annotate_quality_warnings(fig, columns, quality_report)
+            fig = handler(df, valid_cols, **kwargs)
+            self._annotate_quality_warnings(fig, valid_cols, quality_report)
             return fig
         fig = go.Figure()
         fig.add_annotation(

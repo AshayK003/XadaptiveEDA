@@ -169,7 +169,7 @@ class DataQualityPipeline:
 
     def _detect_mixed_types(self, df: pd.DataFrame) -> list[str]:
         mixed: list[str] = []
-        for col in df.select_dtypes(include=['object']).columns:
+        for col in df.select_dtypes(include=['object', 'string']).columns:
             non_null = df[col].dropna()
             if non_null.empty:
                 continue

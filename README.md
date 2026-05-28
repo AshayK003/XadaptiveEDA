@@ -154,8 +154,10 @@ Sidebar toggle that reveals: raw DataFrame viewer, CSV download button, and full
 ├── llm_adapter.py            # LLM analysis, chat, column naming, rate limiting
 ├── nlq_engine.py             # NLP query classifier (stemming, synonyms, TF scoring)
 ├── session_persistence.py    # SQLite save/load for sessions
-├── test_phase1.py–test_phase4.py  # 54 unit tests
-├── test_data_quality.py      # Data quality pipeline tests
+├── test_phase1.py–test_phase4.py  # 54 core unit tests
+├── test_data_quality.py      # Data quality pipeline tests (12 tests)
+├── test_session_persistence.py # SQLite session persistence tests (7 tests)
+├── test_rate_limit.py         # LLM rate limiting tests (5 tests)
 ├── requirements.txt
 └── README.md
 ```
@@ -164,10 +166,10 @@ Sidebar toggle that reveals: raw DataFrame viewer, CSV download button, and full
 
 Run all tests:
 ```bash
-python test_phase1.py && python test_phase2.py && python test_phase3.py && python test_phase4.py && python test_data_quality.py
+python test_phase1.py && python test_phase2.py && python test_phase3.py && python test_phase4.py && python test_data_quality.py && python test_session_persistence.py && python test_rate_limit.py
 ```
 
-54 tests covering: diversity penalty, implicit tracking, comparative explanations, regression checks, column interestingness, global summary, goal setting, temporal decay, save/load round-trip, NLQ via NLP+LLM (stemming, synonyms, TF scoring, column extraction), data quality pipeline (12 pipeline steps).
+68 tests covering: diversity penalty, implicit tracking, comparative explanations, regression checks, column interestingness, global summary, goal setting, temporal decay, save/load round-trip, NLQ via NLP (stemming, synonyms, TF scoring, column extraction), data quality pipeline (12 pipeline steps), SQLite session persistence (7 tests), LLM rate limiting (5 tests).
 
 ## Dependencies
 
@@ -190,3 +192,4 @@ python test_phase1.py && python test_phase2.py && python test_phase3.py && pytho
 - Column selection changes permanently adjust preference weights (not debounced)
 - Clustering uses a custom numpy-only k-means (not scikit-learn) — suitable for exploration, not production
 - Remote API rate-limited to 10 calls/minute; local Ollama unlimited
+- pandas 3.0 compatibility: categorical profiling, mixed-type detection, and stratified sampling handle `StringDtype` correctly

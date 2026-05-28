@@ -132,11 +132,14 @@ def compare_recommendations(rec1, rec2):
     lines = []
     lines.append(f"| Component | **{rec1['title']}** | **{rec2['title']}** |")
     lines.append("|---|---|---|")
-    lines.append(f"| Base score | {rec1.get('base_score', 'N/A'):.2f} | {rec2.get('base_score', 'N/A'):.2f} |")
-    lines.append(f"| Data relevance | {rec1.get('data_relevance', 'N/A'):.2f} | {rec2.get('data_relevance', 'N/A'):.2f} |")
-    p1 = rec1.get('pref_score', 'N/A')
-    p2 = rec2.get('pref_score', 'N/A')
-    lines.append(f"| Your priority | {p1:.1f} | {p2:.1f} |")
+    def _fmt(val, fmt=".2f"):
+        if val is None or isinstance(val, str):
+            return 'N/A'
+        return f"{val:{fmt}}"
+
+    lines.append(f"| Base score | {_fmt(rec1.get('base_score'))} | {_fmt(rec2.get('base_score'))} |")
+    lines.append(f"| Data relevance | {_fmt(rec1.get('data_relevance'))} | {_fmt(rec2.get('data_relevance'))} |")
+    lines.append(f"| Your priority | {_fmt(rec1.get('pref_score'), '.1f')} | {_fmt(rec2.get('pref_score'), '.1f')} |")
     q1 = rec1.get('quality_adjustment')
     q2 = rec2.get('quality_adjustment')
     lines.append(f"| Quality adjustment | {f'{q1:.2f}' if q1 else 'N/A'} | {f'{q2:.2f}' if q2 else 'N/A'} |")

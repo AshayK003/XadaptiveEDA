@@ -125,9 +125,8 @@ def _build_context(profile, df, analysis_type, columns):
                             strong.append(f"{corr.columns[i]} vs {corr.columns[j]} (r={r:.2f})")
                 if strong:
                     lines.append(f"Strong correlations: {'; '.join(strong)}")
-        except Exception:
-            pass
-
+        except Exception as e:
+            log.debug(f"Correlation context skipped: {e}")
     lines.append(f"\nAnalysis type: {analysis_type.replace('_', ' ')}")
     lines.append(f"Selected columns: {', '.join(columns)}")
 
@@ -141,14 +140,14 @@ def _build_context(profile, df, analysis_type, columns):
                 s = sample[col]
                 if not s.isnull().all():
                     summary_lines.append(f"  {col}: range [{s.min():.4g}, {s.max():.4g}], mean={s.mean():.4g}")
-            elif pd.api.types.is_object_dtype(df[col]):
+            elif pd.api.types.is_object_dtype(df[col]) or pd.api.types.is_string_dtype(df[col]):
                 vc = sample[col].value_counts()
                 if not vc.empty:
                     summary_lines.append(f"  {col}: top value '{vc.index[0]}' ({vc.iloc[0]}/{len(sample)} rows)")
         if summary_lines:
             lines.append(f"\nSample column summary:\n" + "\n".join(summary_lines))
-    except Exception:
-        pass
+    except Exception as e:
+        log.debug(f"Sample summary skipped: {e}")
 
     return "\n".join(lines)
 
@@ -478,8 +477,8 @@ def _build_dataset_context(data_profile, df):
     try:
         sample = df.head(3)
         parts.append(f"First 3 rows:\n{sample.to_string(index=False)}\n")
-    except Exception:
-        pass
+    except Exception as e:
+        log.debug(f"Sample rows skipped: {e}")
 
     return "\n".join(parts)
 

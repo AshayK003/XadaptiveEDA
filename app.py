@@ -719,7 +719,6 @@ if uploaded_file is not None:
                         st.write(f"{j+1}. {cr['title']}: {new_score:.2f} {arrow}")
                 
                 st.markdown("---")
-                st.markdown("---")
                 preference_learner.track_interaction(rec, 'explored', pd.Timestamp.now(), {"event": "show_explanation"})
                 st.session_state.user_preferences = preference_learner.preference_weights
             
@@ -884,6 +883,8 @@ if uploaded_file is not None:
                                         else f"_error:{result.get('error')}"
                                     )
                             cached = st.session_state[ai_key]
+                            if not cached:
+                                cached = ""
                             if cached.startswith("_error:"):
                                 st.caption(f"LLM unavailable — {cached[7:]}")
                             else:

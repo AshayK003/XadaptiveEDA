@@ -218,12 +218,15 @@ def match_query(query, columns=None):
                     score += w * 1.5
         scores[atype] = score / max(total_weight, 1)
 
-    # Negation dampening
+    # Negation dampening — only dampen types mentioned near negation tokens
     negated = {'no', 'not', 'without', 'exclude', 'except', 'never'}
-    for t in tokens:
+    neg_window = 3
+    for i, t in enumerate(tokens):
         if t in negated:
-            for atype in scores:
-                scores[atype] *= 0.2
+            window = set(tokens[i+1:i+1+neg_window])
+            for atype, keywords in _TYPE_KEYWORDS.items():
+                if window & keywords:
+                    scores[atype] *= 0.2
 
     # Best match
     best_type = max(scores, key=lambda k: scores[k])

@@ -242,8 +242,9 @@ class RecommendationEngine:
                 scores.append(boot_score)
             if scores:
                 scores.sort()
-                rec['score_ci_lower'] = round(scores[int(n_iter * 0.025)], 4)
-                rec['score_ci_upper'] = round(scores[int(n_iter * 0.975)], 4)
+                n = len(scores)
+                rec['score_ci_lower'] = round(scores[max(0, int(n * 0.025))], 4)
+                rec['score_ci_upper'] = round(scores[min(n - 1, int(n * 0.975))], 4)
             else:
                 rec['score_ci_lower'] = rec['score']
                 rec['score_ci_upper'] = rec['score']
