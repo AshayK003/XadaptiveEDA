@@ -3,6 +3,9 @@ import pandas as pd
 import plotly.express as px
 import os
 import sys
+import time
+import logging
+import uuid
 
 from data_processor import DataProcessor
 from recommendation_engine import RecommendationEngine
@@ -12,6 +15,37 @@ from insight_generator import explain_recommendation, compare_recommendations, g
 from constants import DEFAULT_PREFERENCES, ANALYSIS_GOALS
 from data_quality import QualityReport
 import llm_adapter
+import session_persistence as sp
+
+logging.basicConfig(level=logging.INFO, format='%(levelname)s | %(name)s | %(message)s')
+log = logging.getLogger('app')
+
+
+def _compute_epsilon():
+    return 0.1 if st.session_state.get('_exploration_mode') else 0.0
+
+def _compute_col_affinity():
+    """Compute per-column affinity score (mean Jaccard vs all previously selected columns)."""
+    freq = st.session_state.get('_col_frequency', {})
+    cooc = st.session_state.get('_col_cooccurrence', {})
+    if not freq:
+        return {}
+    affinity = {}
+    for col_a in freq:
+        total_j = 0.0
+        n = 0
+        for col_b in freq:
+            if col_a >= col_b:
+                continue
+            both = cooc.get(col_a, {}).get(col_b, 0)
+            if both == 0:
+                continue
+            jaccard = both / (freq[col_a] + freq[col_b] - both)
+            total_j += jaccard
+            n += 1
+        affinity[col_a] = total_j / n if n > 0 else 0.0
+    return affinity
+
 
 # Page configuration
 st.set_page_config(
@@ -66,6 +100,24 @@ if '_active_goal' not in st.session_state:
 if '_expert_mode' not in st.session_state:
     st.session_state._expert_mode = False
 
+if '_viewed_combos' not in st.session_state:
+    st.session_state._viewed_combos = set()
+
+if '_viz_start_time' not in st.session_state:
+    st.session_state._viz_start_time = {}
+
+if '_col_frequency' not in st.session_state:
+    st.session_state._col_frequency = {}
+
+if '_col_cooccurrence' not in st.session_state:
+    st.session_state._col_cooccurrence = {}
+
+if '_exploration_mode' not in st.session_state:
+    st.session_state._exploration_mode = False
+
+if '_session_id' not in st.session_state:
+    st.session_state._session_id = str(uuid.uuid4())[:8]
+
 # Initialize components
 data_processor = DataProcessor()
 recommendation_engine = RecommendationEngine()
@@ -112,7 +164,11 @@ with st.sidebar:
         if st.session_state.data_profile is not None:
             st.session_state.recommendations = recommendation_engine.generate_recommendations(
                 st.session_state.data_profile, st.session_state.user_preferences,
-                quality_score=getattr(st.session_state.quality_report, 'overall_quality_score', None) if st.session_state.get('_finalized') else None
+                quality_score=getattr(st.session_state.quality_report, 'overall_quality_score', None) if st.session_state.get('_finalized') else None,
+                viewed_combos=st.session_state._viewed_combos,
+                interaction_history=st.session_state.interaction_history,
+                col_affinity=_compute_col_affinity(),
+                epsilon=_compute_epsilon()
             )
         st.rerun()
     
@@ -176,7 +232,10 @@ with st.sidebar:
                     if st.session_state.data_profile is not None:
                         st.session_state.recommendations = recommendation_engine.generate_recommendations(
                             st.session_state.data_profile,
-                            st.session_state.user_preferences
+                            st.session_state.user_preferences,
+                            viewed_combos=st.session_state._viewed_combos,
+                            interaction_history=st.session_state.interaction_history,
+                            col_affinity=_compute_col_affinity()
                         )
                     st.toast("Preferences updated — recommendations reordered.", icon="✅")
     
@@ -187,14 +246,56 @@ with st.sidebar:
         st.session_state.interaction_history = []
         st.toast("Preferences reset to defaults.", icon="🔄")
     
+    st.header("Session")
+    st.session_state._exploration_mode = st.toggle("Exploration mode (ε-greedy)", value=st.session_state.get('_exploration_mode', False), help="Occasionally shows lower-ranked analyses to discover new insights")
+    with st.expander("Save / Load Session", expanded=False):
+        session_name = st.text_input("Session name", value=f"session_{st.session_state._session_id}", key="_session_name_input")
+        col_s, col_l = st.columns(2)
+        with col_s:
+            if st.button("Save Session"):
+                sp.save_session(
+                    session_name,
+                    st.session_state.user_preferences,
+                    st.session_state.interaction_history,
+                    active_goal=st.session_state.get('_active_goal'),
+                    last_file=st.session_state.get('last_file'),
+                    profile_json=st.session_state.data_profile
+                )
+                st.toast(f"Saved session: {session_name}", icon="💾")
+        with col_l:
+            if st.button("Load Session"):
+                data = sp.load_session(session_name)
+                if data:
+                    st.session_state.user_preferences = data["preferences"]
+                    preference_learner.preference_weights = data["preferences"]
+                    st.session_state.interaction_history = data["interaction_history"]
+                    st.session_state._active_goal = data.get("active_goal")
+                    if data.get("last_file"):
+                        st.session_state.last_file = data["last_file"]
+                    if data.get("profile_json"):
+                        st.session_state.data_profile = data["profile_json"]
+                    st.toast(f"Loaded session: {session_name}", icon="📂")
+                    st.rerun()
+                else:
+                    st.toast(f"Session '{session_name}' not found", icon="❌")
+        sessions = sp.list_sessions()
+        if sessions:
+            st.caption("Recent sessions:")
+            for s in sessions:
+                c1, c2 = st.columns([4, 1])
+                with c1:
+                    st.caption(f"{s['id']} — {s['file'] or 'no file'} ({s['updated']})")
+                with c2:
+                    if st.button("Delete", key=f"_del_{s['id']}"):
+                        sp.delete_session(s['id'])
+                        st.rerun()
+    
     st.header("AI Analysis")
     st.session_state._expert_mode = st.toggle("Expert Mode", value=st.session_state.get('_expert_mode', False), help="Show raw data, JSON details, and download options")
     
-    has_api_key = any(os.environ.get(k) for k in ["OPENROUTER_API_KEY", "GROQ_API_KEY"])
-    default_ai_enabled = has_api_key or bool(os.environ.get("LLM_PROVIDER"))
     st.session_state.ai_enabled = st.toggle(
         "Enable AI insights",
-        value=st.session_state.get('ai_enabled', default_ai_enabled),
+        value=st.session_state.get('ai_enabled', True),
         help="Use a local model (Ollama) or a free remote API"
     )
     st.session_state._chat_enabled = st.toggle(
@@ -268,6 +369,15 @@ if uploaded_file is not None:
             st.session_state.df = df
             st.session_state.last_file = uploaded_file.name
             st.session_state.pop('_column_names', None)
+
+            # Progressive stratified sampling for large datasets
+            if len(df) > 50000:
+                st.info(f"Large dataset ({len(df):,} rows). Sampling can speed up exploration.")
+                if st.checkbox("Sample to ~10,000 rows (stratified)", key="sample_large_dataset",
+                               help="Preserves categorical distributions, keeps rare patterns"):
+                    df = data_processor.sample_stratified(df, target_rows=10000)
+                    st.session_state.df = df
+
             progress.progress(35, text="Profiling dataset...")
             data_profile = data_processor.profile_dataset(df)
             st.session_state.data_profile = data_profile
@@ -278,7 +388,11 @@ if uploaded_file is not None:
             progress.progress(70, text="Generating recommendations...")
             recommendations = recommendation_engine.generate_recommendations(
                 data_profile, 
-                st.session_state.user_preferences
+                st.session_state.user_preferences,
+                viewed_combos=st.session_state._viewed_combos,
+                interaction_history=st.session_state.interaction_history,
+                col_affinity=_compute_col_affinity(),
+                epsilon=_compute_epsilon()
             )
             st.session_state.recommendations = recommendations
             progress.progress(100, text="Done")
@@ -319,19 +433,26 @@ if uploaded_file is not None:
         if st.session_state.get('ai_enabled') and '_column_names' not in st.session_state:
             with st.spinner("Suggesting column names from data..."):
                 provider = st.session_state.get('_ai_provider', 'local')
-                model = st.session_state.get('_llm_model', llm_adapter.DEFAULT_MODEL)
+                model = st.session_state.get('_llm_model') or llm_adapter.DEFAULT_MODEL
                 endpoint = st.session_state.get('_llm_endpoint')
-                key_map = {"openrouter": "OPENROUTER_API_KEY", "groq": "GROQ_API_KEY", "custom": "CUSTOM_API_KEY"}
-                api_key = os.environ.get(key_map.get(provider, ""), "")
-                result = llm_adapter.suggest_column_names(
-                    df, unnamed_cols, model=model, provider=provider,
-                    api_key=api_key, endpoint=endpoint
-                )
-                if result.get("ok"):
-                    st.session_state._column_names = result["names"]
-                else:
-                    st.info(f"Could not generate suggestions: {result.get('error')}")
+                if not endpoint and provider != "local":
+                    st.info("Configure an API key and endpoint in the sidebar to use AI naming suggestions.")
                     st.session_state._column_names = {}
+                else:
+                    key_map = {"openrouter": "OPENROUTER_API_KEY", "groq": "GROQ_API_KEY", "custom": "CUSTOM_API_KEY"}
+                    api_key = os.environ.get(key_map.get(provider, ""), "")
+                    result = llm_adapter.suggest_column_names(
+                        df, unnamed_cols, model=model, provider=provider,
+                        api_key=api_key, endpoint=endpoint or ""
+                    )
+                    if result.get("ok"):
+                        st.session_state._column_names = result["names"]
+                        st.success(f"Suggested {len(result['names'])} column name(s)")
+                    else:
+                        st.warning(f"AI naming unavailable: {result.get('error')}")
+                        st.session_state._column_names = {}
+            if st.session_state.get('_column_names'):
+                st.caption("AI-suggested names are pre-filled below")
 
         suggested = st.session_state.get('_column_names') or {}
         rename_map = {}
@@ -377,7 +498,11 @@ if uploaded_file is not None:
             st.session_state.quality_report = data_processor.cleanse(df, skip_name_normalization=True)[1]
             st.session_state.recommendations = recommendation_engine.generate_recommendations(
                 st.session_state.data_profile, st.session_state.user_preferences,
-                quality_score=st.session_state.quality_report.overall_quality_score
+                quality_score=st.session_state.quality_report.overall_quality_score,
+                viewed_combos=st.session_state._viewed_combos,
+                interaction_history=st.session_state.interaction_history,
+                col_affinity=_compute_col_affinity(),
+                epsilon=_compute_epsilon()
             )
             for k in list(st.session_state.keys()):
                 if k.startswith('_ai_'):
@@ -541,6 +666,12 @@ if uploaded_file is not None:
     for i, rec in enumerate(recommendations[:5]):  # Show top 5 recommendations
         with st.expander(f"📋 {rec['title']} (Relevance: {rec['score']:.2f})", expanded=i==0):
             st.write(rec['description'])
+            ci_low = rec.get('score_ci_lower')
+            ci_high = rec.get('score_ci_upper')
+            if ci_low and ci_high and ci_low != ci_high:
+                width = ci_high - ci_low
+                label = 'stable' if width < 0.05 else 'moderate' if width < 0.15 else 'uncertain'
+                st.caption(f"Confidence interval: [{ci_low:.3f}, {ci_high:.3f}] ({label})")
             
             # Column interestingness badges
             if rec['columns']:
@@ -604,8 +735,13 @@ if uploaded_file is not None:
                     'diversity_penalty': rec.get('diversity_penalty'),
                     'data_factors': rec.get('data_factors'),
                     'columns': rec.get('columns'),
-                    'final_score': rec.get('score')
+                    'final_score': rec.get('score'),
+                    'score_ci': [rec.get('score_ci_lower'), rec.get('score_ci_upper')]
                 })
+                ci_low = rec.get('score_ci_lower')
+                ci_high = rec.get('score_ci_upper')
+                if ci_low and ci_high and ci_low != ci_high:
+                    st.caption(f"95% CI: [{ci_low:.3f}, {ci_high:.3f}] — {'stable' if ci_high - ci_low < 0.05 else 'moderate' if ci_high - ci_low < 0.15 else 'uncertain'}")
             
             # Visualization based on recommendation type
             selected_cols = []
@@ -631,8 +767,21 @@ if uploaded_file is not None:
                 
                 if not selected_cols:
                     st.caption("Select columns above to generate a visualization.")
-                
+
                 if selected_cols:
+                    # Update column affinity (co-occurrence tracking)
+                    for col in selected_cols:
+                        st.session_state._col_frequency[col] = st.session_state._col_frequency.get(col, 0) + 1
+                    for i_col in selected_cols:
+                        for j_col in selected_cols:
+                            if i_col < j_col:
+                                if i_col not in st.session_state._col_cooccurrence:
+                                    st.session_state._col_cooccurrence[i_col] = {}
+                                if j_col not in st.session_state._col_cooccurrence:
+                                    st.session_state._col_cooccurrence[j_col] = {}
+                                st.session_state._col_cooccurrence[i_col][j_col] = st.session_state._col_cooccurrence[i_col].get(j_col, 0) + 1
+                                st.session_state._col_cooccurrence[j_col][i_col] = st.session_state._col_cooccurrence[j_col].get(i_col, 0) + 1
+
                     # Add visualization type selection
                     visualization_options = {}
                     if rec['type'] == 'correlation':
@@ -665,11 +814,38 @@ if uploaded_file is not None:
                         fig = visualization_generator.generate_visualization(
                             rec['type'], df, selected_cols, quality_report=quality_report, **kwargs
                         )
+                        st.session_state._viz_start_time[rec['type']] = time.time()
                         event = viz_placeholder.plotly_chart(fig, use_container_width=True, on_select="rerun", key=f"viz_{rec['type']}_{i}")
                         if event and event.selection and event.selection.points:
                             st.caption(f"Selected: {event.selection.points[0]}")
                         preference_learner.track_interaction(rec, 'column_selected', pd.Timestamp.now(), {"columns": selected_cols, "viz_type": selected_viz_type})
+                        st.session_state._viewed_combos.add((rec['type'], frozenset(selected_cols)))
                         st.session_state.user_preferences = preference_learner.preference_weights
+                        
+                        # Per-row outlier explanation for outlier analysis
+                        if rec['type'] == 'outliers' and selected_cols:
+                            outlier_rows = pd.DataFrame()
+                            for col in selected_cols:
+                                if df[col].dtype.kind not in 'ifc':
+                                    continue
+                                q1, q3 = df[col].quantile(0.25), df[col].quantile(0.75)
+                                iqr = q3 - q1
+                                lower, upper = q1 - 1.5 * iqr, q3 + 1.5 * iqr
+                                mask = (df[col] < lower) | (df[col] > upper)
+                                flagged = df[mask].copy()
+                                if not flagged.empty:
+                                    flagged['_outlier_col'] = col
+                                    flagged['_direction'] = flagged[col].apply(
+                                        lambda v: f"+{v - upper:.2f}" if v > upper else f"{v - lower:.2f}"
+                                    )
+                                    outlier_rows = pd.concat([outlier_rows, flagged])
+                            if not outlier_rows.empty:
+                                if st.checkbox("Show outlier rows", key=f"_outlier_rows_{i}"):
+                                    st.dataframe(
+                                        outlier_rows.drop_duplicates().reset_index(drop=True),
+                                        use_container_width=True,
+                                        column_order=[c for c in outlier_rows.columns if not c.startswith('_')] + ['_outlier_col', '_direction']
+                                    )
                     except Exception as e:
                         viz_placeholder.error(f"Error generating visualization: {str(e)}")
             
@@ -714,28 +890,43 @@ if uploaded_file is not None:
                                 st.markdown(cached)
             
             # User feedback
-            col1, col2 = st.columns([1, 1])
+            col1, col2, col3 = st.columns([1, 1, 1])
             with col1:
                 if st.button(f"👍 Useful — {rec['title']}", key=f"useful_{i}"):
-                    preference_learner.track_interaction(rec, 'liked', pd.Timestamp.now())
+                    dwell = time.time() - st.session_state._viz_start_time.get(rec['type'], time.time())
+                    preference_learner.track_interaction(rec, 'liked', pd.Timestamp.now(), {"dwell_seconds": round(dwell, 1), "abandoned": dwell < 5})
                     st.session_state.user_preferences = preference_learner.preference_weights
                     st.session_state.recommendations = recommendation_engine.generate_recommendations(
                         data_profile,
                         st.session_state.user_preferences,
-                        quality_score=st.session_state.quality_report.overall_quality_score
+                        quality_score=st.session_state.quality_report.overall_quality_score,
+                        viewed_combos=st.session_state._viewed_combos,
+                        interaction_history=st.session_state.interaction_history,
+                        col_affinity=_compute_col_affinity()
                     )
                     st.toast("Thanks! Prioritizing similar analyses.", icon="👍")
                     
             with col2:
                 if st.button(f"👎 Not Useful — {rec['title']}", key=f"not_useful_{i}"):
-                    preference_learner.track_interaction(rec, 'disliked', pd.Timestamp.now())
+                    dwell = time.time() - st.session_state._viz_start_time.get(rec['type'], time.time())
+                    preference_learner.track_interaction(rec, 'disliked', pd.Timestamp.now(), {"dwell_seconds": round(dwell, 1), "abandoned": dwell < 5})
                     st.session_state.user_preferences = preference_learner.preference_weights
                     st.session_state.recommendations = recommendation_engine.generate_recommendations(
                         data_profile,
                         st.session_state.user_preferences,
-                        quality_score=st.session_state.quality_report.overall_quality_score
+                        quality_score=st.session_state.quality_report.overall_quality_score,
+                        viewed_combos=st.session_state._viewed_combos,
+                        interaction_history=st.session_state.interaction_history,
+                        col_affinity=_compute_col_affinity()
                     )
                     st.toast("Noted. Showing fewer analyses like this.", icon="👎")
+            
+            with col3:
+                if st.button(f"⏭️ Skip — {rec['title']}", key=f"skip_{i}"):
+                    dwell = time.time() - st.session_state._viz_start_time.get(rec['type'], time.time())
+                    preference_learner.track_interaction(rec, 'ignored', pd.Timestamp.now(), {"dwell_seconds": round(dwell, 1), "abandoned": dwell < 5})
+                    st.session_state.user_preferences = preference_learner.preference_weights
+                    st.toast("Skipped — fewer similar suggestions if repeated.", icon="⏭️")
     
 else:
     # Display welcome message and instructions when no file is uploaded

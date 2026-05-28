@@ -3,7 +3,10 @@ import time
 import urllib.request
 import urllib.error
 import pandas as pd
+import logging
+from collections import defaultdict
 
+log = logging.getLogger('llm_adapter')
 
 DEFAULT_MODEL = "qwen2.5-coder:7b"
 LIGHT_MODELS = ["qwen2.5-coder:7b", "qwen2.5:7b", "qwen2.5:3b", "phi3:mini", "llama3.2:3b", "gemma2:2b", "tinyllama"]
@@ -13,6 +16,26 @@ TIMEOUT = 60
 LOCAL_TIMEOUT = 120
 MAX_RETRIES = 2
 RETRY_DELAYS = [1, 3]
+
+# Remote API rate limiting: per-provider call timestamps
+_remote_call_log = defaultdict(list)
+RATE_LIMIT_CALLS = 10
+RATE_LIMIT_WINDOW = 60  # seconds
+
+
+def _check_rate_limit(provider):
+    if provider == "local":
+        return True
+    now = time.time()
+    window_start = now - RATE_LIMIT_WINDOW
+    _remote_call_log[provider] = [t for t in _remote_call_log[provider] if t > window_start]
+    if len(_remote_call_log[provider]) >= RATE_LIMIT_CALLS:
+        oldest = _remote_call_log[provider][0]
+        retry_after = int(RATE_LIMIT_WINDOW - (now - oldest))
+        log.warning(f"Rate limit hit for {provider}: {len(_remote_call_log[provider])} calls in {RATE_LIMIT_WINDOW}s")
+        return False
+    _remote_call_log[provider].append(now)
+    return True
 
 def _urlopen_retry(req, timeout):
     last_err = None
@@ -242,6 +265,8 @@ def generate_analysis_local(profile, df, analysis_type, columns,
 
 def generate_analysis_remote(profile, df, analysis_type, columns,
                              api_key, endpoint, model):
+    if not _check_rate_limit(endpoint):
+        return {"ok": False, "error": f"Rate limit exceeded ({RATE_LIMIT_CALLS} calls/{RATE_LIMIT_WINDOW}s). Wait and retry."}
     context = _build_context(profile, df, analysis_type, columns)
     guide = ANALYSIS_GUIDES.get(analysis_type, "Focus on key patterns and actionable findings.")
     user_prompt = (
@@ -290,9 +315,11 @@ def generate_analysis_remote(profile, df, analysis_type, columns,
 COLUMN_NAMING_SYSTEM_PROMPT = (
     "You are a data engineering assistant. Given sample data from unnamed columns, "
     "suggest short descriptive snake_case names (1-3 words each). "
-    "Names should reflect the content, not the position. "
+    "Names must reflect the actual data content — read the sample values carefully. "
+    "For numeric data use names like 'age', 'price', 'score', 'quantity', 'year', etc. "
+    "For text data use names like 'name', 'description', 'category', 'email', etc. "
     "Respond ONLY with one mapping per line in this exact format:\n"
-    "old_column_name → suggested_name"
+    "old_column_name -> suggested_name"
 )
 
 
@@ -306,16 +333,19 @@ def suggest_column_names(df, unnamed_cols, model=DEFAULT_MODEL, provider="local"
     for col in unnamed_cols:
         if col not in df.columns:
             continue
-        sample = df[col].dropna().head(5).tolist()
+        sample = df[col].dropna().head(8).tolist()
         sample_str = ", ".join(repr(v) for v in sample) if sample else "(all empty)"
-        lines.append(f'Unnamed column: "{col}"')
+        dtype = str(df[col].dtype)
+        lines.append(f'Unnamed column: "{col}" (type: {dtype})')
         lines.append(f"Sample data: {sample_str}")
         lines.append("")
 
     user_prompt = (
-        "Suggest column names for these unnamed columns.\n\n"
+        "Suggest descriptive column names for these unnamed columns based on their data.\n\n"
         + "\n".join(lines)
-        + "\nRespond ONLY with one mapping per line:"
+        + "\nRespond ONLY with one mapping per line, like:\n"
+        + "unnamed_0 -> customer_id\n"
+        + "unnamed_1 -> product_name"
     )
 
     if provider == "local":
@@ -334,8 +364,11 @@ def suggest_column_names(df, unnamed_cols, model=DEFAULT_MODEL, provider="local"
                 result = json.loads(resp.read())
                 text = result.get("response", "").strip()
         except Exception as e:
+            log.warning(f"Column naming local failed: {e}")
             return {"ok": False, "error": str(e)}
     else:
+        if not _check_rate_limit(endpoint):
+            return {"ok": False, "error": f"Rate limit exceeded ({RATE_LIMIT_CALLS} calls/{RATE_LIMIT_WINDOW}s). Wait and retry."}
         payload = json.dumps({
             "model": model,
             "messages": [
@@ -357,12 +390,21 @@ def suggest_column_names(df, unnamed_cols, model=DEFAULT_MODEL, provider="local"
 
     names = {}
     for line in text.split("\n"):
-        if "→" in line:
-            parts = line.split("→", 1)
-            old = parts[0].strip().strip('"')
-            new = parts[1].strip().strip('"')
-            if old in unnamed_cols and new:
-                names[old] = new
+        line = line.strip()
+        if not line:
+            continue
+        sep = None
+        for s in [" -> ", " → ", "→", "->", ": "]:
+            if s in line:
+                sep = s
+                break
+        if sep is None:
+            continue
+        parts = line.split(sep, 1)
+        old = parts[0].strip().strip('"').strip("'")
+        new = parts[1].strip().strip('"').strip("'").rstrip('.')
+        if old in unnamed_cols and new and new != old:
+            names[old] = new
 
     if not names:
         return {"ok": False, "error": "Could not parse LLM response"}
@@ -493,6 +535,8 @@ def chat_with_data(query, data_profile, df, conversation_history=None,
         except Exception as e:
             return {"ok": False, "error": str(e)}
     else:
+        if not _check_rate_limit(endpoint):
+            return {"ok": False, "error": f"Rate limit exceeded ({RATE_LIMIT_CALLS} calls/{RATE_LIMIT_WINDOW}s). Wait and retry."}
         payload = json.dumps({
             "model": model,
             "messages": messages,

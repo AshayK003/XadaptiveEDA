@@ -1,7 +1,10 @@
 import pandas as pd
 import os
 import warnings
+import logging
 from data_quality import cleanse as _cleanse, QualityReport
+
+log = logging.getLogger('data_processor')
 
 
 class DataProcessor:
@@ -49,6 +52,7 @@ class DataProcessor:
                 'unique_counts': {},
                 'skewness': {},
                 'correlation_exists': False,
+                'mean_pairwise_correlation': 0.0,
                 'time_series_candidates': [],
                 'categorical_cardinality': {},
                 'has_outliers': {}
@@ -126,6 +130,17 @@ class DataProcessor:
                 except Exception:
                     pass
         
+        # Mean absolute pairwise correlation for numerical columns
+        mean_pairwise_correlation = 0.0
+        if len(numerical_cols) >= 2:
+            corr = df[numerical_cols].corr(numeric_only=True).abs()
+            n = len(corr.columns)
+            values = []
+            for i in range(n):
+                for j in range(i + 1, n):
+                    values.append(corr.iloc[i, j])
+            mean_pairwise_correlation = sum(values) / len(values) if values else 0.0
+
         # Return profile dictionary
         return {
             'shape': df.shape,
@@ -137,6 +152,7 @@ class DataProcessor:
             'unique_counts': unique_counts,
             'skewness': skewness,
             'correlation_exists': len(numerical_cols) > 1,
+            'mean_pairwise_correlation': mean_pairwise_correlation,
             'time_series_candidates': time_series_candidates,
             'categorical_cardinality': {col: df[col].nunique() for col in categorical_cols},
             'has_outliers': self._check_outliers(df, numerical_cols)
@@ -160,4 +176,24 @@ class DataProcessor:
                 if outlier_percentage > 0:
                     outlier_cols[col] = outlier_percentage 
         
-        return outlier_cols  # Return the outlier columns dictionary 
+        return outlier_cols  # Return the outlier columns dictionary
+
+    @staticmethod
+    def sample_stratified(df, target_rows=10000, random_state=42):
+        """Sample to target_rows using stratified sampling if possible, else random."""
+        if len(df) <= target_rows:
+            return df
+        # Find good stratification column: low-cardinality categorical
+        strata_col = None
+        for col in df.select_dtypes(include=['object', 'category']).columns:
+            nunique = df[col].nunique()
+            if 2 <= nunique <= 20 and nunique < len(df) * 0.5:
+                strata_col = col
+                break
+        if strata_col is None:
+            return df.sample(n=target_rows, random_state=random_state)
+        target_per_stratum = target_rows // df[strata_col].nunique()
+        sampled = df.groupby(strata_col, group_keys=False).apply(
+            lambda x: x.sample(n=min(len(x), max(target_per_stratum, 1)), random_state=random_state)
+        )
+        return sampled.reset_index(drop=True) 

@@ -1,6 +1,6 @@
 # EDA Assistant
 
-A Streamlit application that profiles datasets, scores six analysis types by data relevance × user priority, and generates plotly visualizations. Features a guided workflow (upload → rename → clean → finalize → analyze), AI-powered insights, a chat interface for asking any question about your dataset via LLM, preference tracking, data quality pipeline, and an NLP query classifier.
+A Streamlit application that profiles datasets, scores **eight** analysis types by data relevance × user priority, and generates plotly visualizations. Features a guided workflow (upload → rename → clean → finalize → analyze), AI-powered insights, a chat interface for asking any question about your dataset via LLM, preference tracking with temporal decay, a data quality pipeline, session persistence via SQLite, ε-greedy exploration, rate-limited remote LLM calls, and an NLP query classifier.
 
 ## Quick Start
 
@@ -30,24 +30,28 @@ Upload file → cleanse() → renamed/cleaned df
 ```
 
 The app introduces a **3-step pre-analysis pipeline**:
-1. **Rename unnamed columns** — AI-suggested naming or manual entry
+1. **Rename unnamed columns** — AI-suggested naming (LLM on by default) or manual entry
 2. **Drop first N rows** — optional data cleanup
 3. **Finalize** — triggers full profiling, quality report, and recommendation generation
 
 ### Scoring Formula
 
 Each analysis type gets:  
-`base_score × data_relevance × user_preference_score × quality_adjustment [× diversity_penalty]`
+`base_score × data_relevance × user_preference_score × quality_adjustment [× diversity_penalty] [× novelty_penalty] [× avoidance_penalty] [× affinity_boost]`
 
 - **base_score**: fixed per type (0.6–0.9)
-- **data_relevance**: computed from dataset characteristics (0.5–1.0)
+- **data_relevance**: computed from dataset characteristics (0.5–1.0), includes pairwise correlation for correlation type
 - **user_preference_score**: slider value or feedback-adjusted weight (0.1–1.0)
 - **quality_adjustment**: 0.5 + 0.5 × quality_score
 - **diversity_penalty**: 0.85 if same-category duplicate, else 1.0
+- **novelty_penalty**: 0.6 if exact combo viewed, 0.85 if same type
+- **avoidance_penalty**: 0.5 if skipped ≥3 times, gradual for 1–2
+- **affinity_boost**: up to 1.10× based on column co-occurrence Jaccard
+- **confidence interval**: 95% CI via bootstrap (50 iterations) reported as `score_ci_lower` / `score_ci_upper`
 
-Results sorted descending, top 5 displayed.
+Results sorted descending, top 5 displayed (with ε-greedy exploration support).
 
-## Six Analysis Types
+## Eight Analysis Types
 
 | Type | Trigger | Default Chart |
 |---|---|---|
@@ -57,6 +61,8 @@ Results sorted descending, top 5 displayed.
 | **Categorical** | Any categorical column | Bar or Pie chart |
 | **Outliers** | IQR-detectable outliers | Boxplot |
 | **Time Series** | Date/time column detected | Line chart |
+| **Clustering** | ≥2 numerical columns | K-means scatter (SVD 2D if >2 dims) |
+| **Feature Importance** | ≥2 numerical columns | Mutual information bar chart |
 
 ## Chat with Your Data (LLM)
 
@@ -72,7 +78,7 @@ The chat sends dataset context (shape, column stats, sample rows, missing values
 
 ## AI Insights (Optional)
 
-An optional LLM layer on each analysis provides natural-language observations:
+An optional LLM layer on each analysis provides natural-language observations. AI is **enabled by default** (for column naming and insights).
 
 | Provider | Key Requirement | Default Model |
 |---|---|---|
@@ -81,7 +87,23 @@ An optional LLM layer on each analysis provides natural-language observations:
 | Groq (free tier) | `GROQ_API_KEY` | llama-3.3-70b-versatile |
 | Custom API | `CUSTOM_API_KEY` + endpoint | Configurable |
 
-Toggle in sidebar. Features streaming output for speed, LRU-cached response store (capped at 20 entries).
+Remote API calls are **rate-limited** to 10 requests per 60 seconds. Local Ollama is never rate-limited. Features LRU-cached response store (capped at 20 entries).
+
+## Session Persistence
+
+Sessions can be saved to and loaded from a local SQLite database (`~/.eda_assistant_sessions.db`). Persists preferences, interaction history, active goal, last filename, and profile JSON. The actual DataFrame is not persisted — users re-upload the file. Recent sessions are listed with delete buttons.
+
+## ε-Greedy Exploration
+
+A sidebar toggle enables exploration mode. When active, there is a 10% chance per recommendation re-rank to swap one top-5 recommendation with a randomly chosen lower-ranked alternative, helping discover unexpected insights.
+
+## Per-Row Outlier Explainability
+
+For outlier analysis, a "Show outlier rows" checkbox reveals which columns triggered each row's outlier flag and how far beyond the IQR bound the value lies.
+
+## Progressive Stratified Sampling
+
+Datasets larger than 50,000 rows offer an opt-in checkbox to sample down to ~10,000 rows using stratified sampling (preserving categorical distributions). Falls back to random sampling if no suitable stratification column exists.
 
 ## NLP Query Classifier
 
@@ -111,10 +133,12 @@ All charts use **plotly** (interactive: zoom, pan, hover, download as PNG). No m
 | Categorical | Bar, Pie |
 | Outliers | Boxplot |
 | Time Series | Line |
+| Clustering | K-means scatter (numpy-only) |
+| Feature Importance | Mutual information bar |
 
 ## Expert Mode
 
-Sidebar toggle that reveals: raw DataFrame viewer, CSV download button, and full recommendation JSON with technical details (base score, data relevance, quality adjustment, diversity penalty).
+Sidebar toggle that reveals: raw DataFrame viewer, CSV download button, and full recommendation JSON with technical details (base score, data relevance, quality adjustment, diversity penalty, novelty penalty, avoidance penalty, affinity boost, confidence interval).
 
 ## Project Structure
 
@@ -122,13 +146,14 @@ Sidebar toggle that reveals: raw DataFrame viewer, CSV download button, and full
 ├── app.py                    # Streamlit UI (sidebar, recommendations, viz, chat)
 ├── data_processor.py         # File loading, dataset cleansing, profiling
 ├── data_quality.py           # DataQualityPipeline, QualityReport, cleanse()
-├── recommendation_engine.py  # Scoring/ranking, diversity, column interestingness
+├── recommendation_engine.py  # Scoring/ranking, penalties, boosts, bootstrap
 ├── preference_learner.py     # PreferenceTracker: 5 actions + goal/decay/persistence
 ├── insight_generator.py      # Explanations, comparisons, global summary
-├── visualization_generator.py# Plotly chart creation
+├── visualization_generator.py# Plotly chart creation (incl. k-means, mutual info)
 ├── constants.py              # ANALYSIS_TYPES, DEFAULT_PREFERENCES, ANALYSIS_GOALS
-├── llm_adapter.py            # LLM analysis, chat, column naming
+├── llm_adapter.py            # LLM analysis, chat, column naming, rate limiting
 ├── nlq_engine.py             # NLP query classifier (stemming, synonyms, TF scoring)
+├── session_persistence.py    # SQLite save/load for sessions
 ├── test_phase1.py–test_phase4.py  # 54 unit tests
 ├── test_data_quality.py      # Data quality pipeline tests
 ├── requirements.txt
@@ -157,9 +182,11 @@ python test_phase1.py && python test_phase2.py && python test_phase3.py && pytho
 
 ## Limitations
 
-- Session-only state: preferences reset on page reload (optional save/load via JSON)
+- Session-only state: preferences reset on page reload (optional save/load via SQLite)
 - No ML or AI: scoring uses fixed heuristics, not learned models; LLM insights and chat are optional
 - Time series analysis plots against the first numerical column only
 - Correlation uses pearson by default (spearman/kendall not exposed in UI)
 - Large datasets (>100k rows) may be slow (progressive sampling available as opt-in)
 - Column selection changes permanently adjust preference weights (not debounced)
+- Clustering uses a custom numpy-only k-means (not scikit-learn) — suitable for exploration, not production
+- Remote API rate-limited to 10 calls/minute; local Ollama unlimited

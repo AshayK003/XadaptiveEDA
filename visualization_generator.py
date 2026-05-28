@@ -14,6 +14,8 @@ class VisualizationGenerator:
             'categorical': self._create_categorical_plot,
             'outliers': self._create_outliers_plot,
             'time_series': self._create_time_series_plot,
+            'clustering': self._create_clustering_plot,
+            'feature_importance': self._create_feature_importance_plot,
         }
         handler = dispatch.get(analysis_type)
         if handler:
@@ -202,4 +204,74 @@ class VisualizationGenerator:
         else:
             fig.add_annotation(text="Could not create time series plot with selected columns", xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False)
             fig.update_layout(height=450)
+        return fig
+
+    def _kmeans(self, data, k, max_iter=100, random_state=42):
+        rng = np.random.default_rng(random_state)
+        centroids = data.iloc[rng.choice(len(data), k, replace=False)].values
+        for _ in range(max_iter):
+            distances = np.linalg.norm(data.values[:, None] - centroids[None, :], axis=2)
+            labels = np.argmin(distances, axis=1)
+            new_centroids = np.array([data.values[labels == i].mean(axis=0) for i in range(k)])
+            if np.allclose(centroids, new_centroids):
+                break
+            centroids = new_centroids
+        return labels
+
+    def _create_clustering_plot(self, df, columns, n_clusters=3, **kwargs):
+        fig = go.Figure()
+        num_df = df[columns].select_dtypes(include=['number']).dropna()
+        if num_df.shape[1] < 2 or len(num_df) < n_clusters:
+            fig.add_annotation(text="Need ≥2 numerical columns with enough rows for clustering", xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False)
+            fig.update_layout(height=450)
+            return fig
+        labels = self._kmeans(num_df, k=min(n_clusters, len(num_df)))
+        dims = num_df.shape[1]
+        if dims >= 3:
+            centered = num_df.values - num_df.values.mean(axis=0)
+            u, s, vt = np.linalg.svd(centered, full_matrices=False)
+            coords = u[:, :2] * s[:2]
+            x, y = coords[:, 0], coords[:, 1]
+            xlabel, ylabel = "PC1", "PC2"
+        else:
+            x, y = num_df.iloc[:, 0], num_df.iloc[:, 1]
+            xlabel, ylabel = num_df.columns[0], num_df.columns[1]
+        for c in range(min(n_clusters, len(num_df))):
+            mask = labels == c
+            fig.add_trace(go.Scatter(
+                x=x[mask], y=y[mask], mode='markers',
+                name=f"Cluster {c+1}", marker=dict(size=6)
+            ))
+        fig.update_layout(title="K-Means Clustering", xaxis_title=xlabel, yaxis_title=ylabel, height=450)
+        return fig
+
+    def _mutual_info(self, x, y, bins=10):
+        xy = np.histogram2d(x, y, bins=bins)[0]
+        xy = xy / xy.sum()
+        xm = xy.sum(axis=1)
+        ym = xy.sum(axis=0)
+        mi = 0.0
+        for i in range(bins):
+            for j in range(bins):
+                if xy[i, j] > 0:
+                    mi += xy[i, j] * np.log2(xy[i, j] / (xm[i] * ym[j] + 1e-10))
+        return mi
+
+    def _create_feature_importance_plot(self, df, columns, **kwargs):
+        fig = go.Figure()
+        num_df = df[columns].select_dtypes(include=['number']).dropna()
+        if num_df.shape[1] < 2:
+            fig.add_annotation(text="Need ≥2 numerical columns", xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False)
+            fig.update_layout(height=450)
+            return fig
+        pairs = []
+        for i in range(len(num_df.columns)):
+            for j in range(i + 1, len(num_df.columns)):
+                mi = self._mutual_info(num_df.iloc[:, i].values, num_df.iloc[:, j].values)
+                pairs.append((f"{num_df.columns[i]} ↔ {num_df.columns[j]}", mi))
+        pairs.sort(key=lambda x: -x[1])
+        top = pairs[:10]
+        names, scores = zip(*top) if top else ([], [])
+        fig = go.Figure(go.Bar(x=scores, y=names, orientation='h', marker_color='#1f77b4'))
+        fig.update_layout(title="Top Feature Pairs by Mutual Information", xaxis_title="Mutual Information (bits)", yaxis_title=None, height=400)
         return fig

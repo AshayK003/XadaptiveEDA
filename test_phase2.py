@@ -21,7 +21,7 @@ profile = {
     'has_outliers': {'y': 3.5},
     'unique_counts': {'x': 90, 'y': 50, 'sparse': 15, 'cat': 5, 'date': 30}
 }
-prefs = {k: 0.5 for k in ['distribution','correlation','missing_values','categorical','outliers','time_series']}
+prefs = {k: 0.5 for k in ['distribution','correlation','missing_values','categorical','outliers','time_series','clustering','feature_importance']}
 
 qr = QualityReport(sparse_columns=['sparse'], constant_columns=[], mixed_type_columns=[],
                    null_percentages={'sparse': 70.0}, overall_quality_score=0.72)
