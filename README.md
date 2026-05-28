@@ -87,7 +87,7 @@ An optional LLM layer on each analysis provides natural-language observations. A
 | Groq (free tier) | `GROQ_API_KEY` | llama-3.3-70b-versatile |
 | Custom API | `CUSTOM_API_KEY` + endpoint | Configurable |
 
-Remote API calls are **rate-limited** to 10 requests per 60 seconds. Local Ollama is never rate-limited. Features LRU-cached response store (capped at 20 entries).
+Local Ollama automatically uses **GPU acceleration** when VRAM is available, with seamless **CPU fallback** for layers that don't fit in GPU memory. No manual configuration required. Remote API calls are **rate-limited** to 10 requests per 60 seconds. Features LRU-cached response store (capped at 20 entries).
 
 ## Session Persistence
 
