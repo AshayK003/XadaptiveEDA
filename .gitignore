@@ -1,7 +1,15 @@
 venv/
 __pycache__/
 *.pyc
+*.pyo
 .DS_Store
+.idea/
+.vscode/
+.mypy_cache/
+.pytest_cache/
+*.egg-info/
+*.log
+*.db
 
 # Internal engineering artifacts — not for public repo
 AGENTS.md
@@ -9,6 +17,7 @@ engineering_memory.md
 
 # Environment variables (API keys)
 .env
+.env.local
 
-# Streamlit logs
-streamlit_start.log
+# Tool-specific config
+opencode.json

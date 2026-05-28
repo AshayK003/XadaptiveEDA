@@ -106,27 +106,6 @@ def explain_recommendation(recommendation, data_profile, user_preferences, quali
     }
 
 
-def explain_user_preferences(preferences):
-    """Describe current user priority settings in plain text."""
-    if not preferences:
-        return "All priorities are at their default values (0.5)."
-
-    sorted_prefs = sorted(preferences.items(), key=lambda x: x[1], reverse=True)
-    top = sorted_prefs[0]
-    bottom = sorted_prefs[-1]
-
-    parts = []
-    if top[1] > 0.6:
-        parts.append(f"Highest priority: {top[0].replace('_', ' ')} ({top[1]:.1f})")
-    if bottom[1] < 0.4:
-        parts.append(f"Lowest priority: {bottom[0].replace('_', ' ')} ({bottom[1]:.1f})")
-
-    if not parts:
-        return "All priorities are near the default level (0.5)."
-
-    return " | ".join(parts)
-
-
 def compare_recommendations(rec1, rec2):
     """Generate side-by-side markdown comparison of two recommendations."""
     lines = []

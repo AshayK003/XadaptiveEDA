@@ -1,6 +1,5 @@
 import random
 import logging
-from constants import ANALYSIS_TYPES
 
 log = logging.getLogger('recommendation_engine')
 

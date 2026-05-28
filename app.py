@@ -955,6 +955,19 @@ else:
 
 # Footer
 st.markdown("---")
-st.markdown("EDA Assistant")
+col1, col2, col3 = st.columns([1, 2, 1])
+with col2:
+    st.markdown(
+        '<div style="text-align:center">'
+        '<a href="https://chai4.me/darkcharon3301" target="_blank" title="Support darkcharon3301 on Chai4Me" '
+        'style="display:inline-flex;flex-direction:column;align-items:center;justify-content:center;'
+        'background:#ffffff;padding:8px 32px;border-radius:16px;text-decoration:none;border:1px solid #e5e7eb;'
+        'box-shadow:0 4px 6px -1px rgba(0,0,0,0.05), 0 2px 4px -2px rgba(0,0,0,0.05);'
+        'transition:transform 0.2s;">'
+        '<img src="https://chai4.me/icons/wordmark.png" alt="Chai4Me" style="height:32px;object-fit:contain;"/>'
+        '</a></div>',
+        unsafe_allow_html=True
+    )
+st.caption("EDA Assistant")
 
  
