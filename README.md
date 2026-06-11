@@ -11,6 +11,7 @@
 [![Streamlit](https://img.shields.io/badge/Streamlit-≥1.36-FF4B4B.svg)](https://streamlit.io/)
 [![Tests](https://img.shields.io/badge/tests-68%20passing-brightgreen.svg)](#testing)
 [![pandas](https://img.shields.io/badge/pandas-≥1.5-15045D.svg)](https://pandas.pydata.org/)
+[![GitHub Stars](https://img.shields.io/github/stars/AshayK003/XadaptiveEDA?logo=github)](https://github.com/AshayK003/XadaptiveEDA)
 
 [Quick Start](#quick-start) • [Features](#features) • [Demo](#demo) • [Architecture](#architecture) • [Contributing](#contributing)
 
