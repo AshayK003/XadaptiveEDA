@@ -429,6 +429,6 @@ A: Only if you use OpenRouter, Groq, or Custom API. Local Ollama keeps everythin
 
 **Built with ❤️ for the data community**
 
-[⭐ Star this repo](https://github.com/AshayK003/XadaptiveEDA) • [🐛 Report Bug](https://github.com/AshayK003/XadaptiveEDA/issues) • [💡 Request Feature](https://github.com/AshayK003/XadaptiveEDA/issues) • [☕ Support the developer](https://chai4.me/darkcharon3301)
+[⭐ Star this repo](https://github.com/AshayK003/XadaptiveEDA) • [🐛 Report Bug](https://github.com/AshayK003/XadaptiveEDA/issues) • [💡 Request Feature](https://github.com/AshayK003/XadaptiveEDA/issues) • [☕ Support the developer](https://chai4.me/ashaykushwaha003)
 
 </div>
