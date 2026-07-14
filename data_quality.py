@@ -55,6 +55,7 @@ class DataQualityPipeline:
 
     def run(self, df: pd.DataFrame, skip_name_normalization: bool = False) -> tuple[pd.DataFrame, QualityReport]:
         """Run full pipeline. Returns (cleaned_df, QualityReport)."""
+        self.warnings = []
         if df.empty:
             report = QualityReport(warnings=["Empty dataset — no processing applied"])
             return df, report
@@ -104,7 +105,7 @@ class DataQualityPipeline:
 
         self._compute_quality_metrics(df, report)
         self._collect_warnings(report)
-        report.warnings = self.warnings
+        report.warnings = list(self.warnings)
 
         return df, report
 
