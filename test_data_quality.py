@@ -114,4 +114,17 @@ assert ' A ' in original.columns
 assert original[' A '].iloc[1] == np.inf
 print("  Original DataFrame unchanged. Passed!")
 
+# ─── Test 13: Warnings reset between run() calls (Issue #1) ───
+print("\n=== Test 13: Warnings Reset Between Runs ===")
+pipeline = DataQualityPipeline()
+df_warn = pd.DataFrame({'a': [1, 1, 1]})     # constant column → triggers warnings
+df_clean = pd.DataFrame({'b': [1, 2, 3]})    # clean data → no warnings expected
+_, report1 = pipeline.run(df_warn)
+assert len(report1.warnings) > 0, "First run should produce warnings"
+_, report2 = pipeline.run(df_clean)
+assert len(report2.warnings) == 0, f"Second run leaked warnings: {report2.warnings}"
+assert report1.warnings is not report2.warnings, "Reports should not share the same warnings list"
+assert len(report1.warnings) > 0, "First report's warnings should be unchanged after second run"
+print("  Warnings reset between runs, reports independent. Passed!")
+
 print("\n=== ALL DATA QUALITY PIPELINE TESTS PASSED ===")
