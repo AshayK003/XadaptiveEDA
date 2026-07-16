@@ -124,11 +124,11 @@ class RecommendationEngine:
                     })
         
         recommendations.sort(key=lambda x: x['score'], reverse=True)
+        recommendations = self._bootstrap_scores(recommendations, data_profile, user_preferences)
         recommendations = self._apply_diversity_penalty(recommendations)
         recommendations = self._apply_novelty_penalty(recommendations, viewed_combos)
         recommendations = self._apply_avoidance_penalty(recommendations, interaction_history)
         recommendations = self._apply_affinity_boost(recommendations, col_affinity)
-        recommendations = self._bootstrap_scores(recommendations, data_profile, user_preferences)
         recommendations = self._apply_epsilon_greedy(recommendations, epsilon=epsilon)
         return sorted(recommendations, key=lambda x: x['score'], reverse=True)
     

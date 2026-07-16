@@ -9,7 +9,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![Streamlit](https://img.shields.io/badge/Streamlit-≥1.36-FF4B4B.svg)](https://streamlit.io/)
-[![Tests](https://img.shields.io/badge/tests-68%20passing-brightgreen.svg)](#testing)
+[![Tests](https://img.shields.io/badge/tests-53%20passing-brightgreen.svg)](#testing)
 [![pandas](https://img.shields.io/badge/pandas-≥1.5-15045D.svg)](https://pandas.pydata.org/)
 [![GitHub Stars](https://img.shields.io/github/stars/AshayK003/XadaptiveEDA?logo=github)](https://github.com/AshayK003/XadaptiveEDA)
 
