@@ -7,7 +7,29 @@ from plotly.subplots import make_subplots
 
 class VisualizationGenerator:
     def generate_visualization(self, analysis_type, df, columns, quality_report=None, **kwargs):
+        if df is None or df.empty:
+            fig = go.Figure()
+            fig.add_annotation(
+                text="No data available for visualization",
+                xref="paper",
+                yref="paper",
+                x=0.5,
+                y=0.5,
+                showarrow=False,
+            )
+            return fig
         valid_cols = [c for c in columns if c in df.columns]
+        if not valid_cols:
+            fig = go.Figure()
+            fig.add_annotation(
+                text="No valid columns selected for visualization",
+                xref="paper",
+                yref="paper",
+                x=0.5,
+                y=0.5,
+                showarrow=False,
+            )
+            return fig
         dispatch = {
             'distribution': self._create_distribution_plot,
             'correlation': self._create_correlation_plot,
@@ -59,7 +81,18 @@ class VisualizationGenerator:
         if len(columns) == 1:
             col = columns[0]
             fig = make_subplots(rows=1, cols=2, subplot_titles=[f"Distribution of {col}", f"Boxplot of {col}"])
-            data = df[col].dropna()
+            data = df[col].dropna() 
+            if data.empty:
+                fig = go.Figure()
+                fig.add_annotation(
+                    text="No data available for this column",
+                    x=0.5,
+                    y=0.5,
+                    xref="paper",
+                    yref="paper",
+                    showarrow=False,
+                )
+                return fig
             fig.add_trace(go.Histogram(x=data, name=col, histnorm='probability density'), row=1, col=1)
             fig.add_trace(go.Box(y=data, name=col, boxmean='sd'), row=1, col=2)
             fig.update_layout(height=450, showlegend=False)
@@ -72,6 +105,16 @@ class VisualizationGenerator:
         )
         for i, col in enumerate(columns):
             data = df[col].dropna()
+            if data.empty:
+                fig.add_annotation(
+                    text=f"No data available for {col}",
+                    x=0.5,
+                    y=(i + 0.5) / n,
+                    xref="paper",
+                    yref="paper",
+                    showarrow=False,
+                )
+                continue
             fig.add_trace(go.Histogram(x=data, showlegend=False, histnorm='probability density'), row=i+1, col=1)
             fig.add_trace(go.Box(y=data, showlegend=False, boxmean='sd'), row=i+1, col=2)
         fig.update_layout(height=350 * n, title_text="Distribution Analysis")
@@ -127,6 +170,17 @@ class VisualizationGenerator:
         if len(columns) == 1:
             col = columns[0]
             vc = df[col].value_counts().nlargest(max_categories)
+            if vc.empty:
+                fig = go.Figure()
+                fig.add_annotation(
+                    text=f"No data available for {col}",
+                    x=0.5,
+                    y=0.5,
+                    xref="paper",
+                    yref="paper",
+                    showarrow=False,
+                )
+                return fig
             if plot_type == 'pie':
                 fig = px.pie(values=vc.values, names=vc.index, title=f'Distribution of {col}',
                              color_discrete_sequence=colors)
@@ -167,14 +221,40 @@ class VisualizationGenerator:
             return fig
 
         if len(columns) == 1:
+            col = columns[0]
+            data = df[col].dropna()
+
+            if data.empty:
+                fig = go.Figure()
+                fig.add_annotation(
+                    text=f"No data available for {col}",
+                    x=0.5,
+                    y=0.5,
+                    xref="paper",
+                    yref="paper",
+                    showarrow=False,
+                )
+                return fig
             fig = go.Figure()
-            fig.add_trace(go.Box(y=df[columns[0]].dropna(), name=columns[0], boxmean='sd'))
+            fig.add_trace(go.Box(y=data, name=col, boxmean='sd'))
             fig.update_layout(title="Outlier Analysis", height=450)
             return fig
 
         fig = make_subplots(rows=1, cols=len(columns), subplot_titles=[f"Outliers in {col}" for col in columns])
         for i, col in enumerate(columns):
-            fig.add_trace(go.Box(y=df[col].dropna(), showlegend=False, boxmean='sd'), row=1, col=i+1)
+            data = df[col].dropna()
+
+            if data.empty:
+                fig.add_annotation(
+                    text=f"No data available for {col}",
+                    x=0.5,
+                    y=0.5,
+                    xref="paper",
+                    yref="paper",
+                    showarrow=False,
+                )
+                continue
+            fig.add_trace(go.Box(y=data, showlegend=False, boxmean='sd'), row=1, col=i+1)
         fig.update_layout(title_text="Outlier Analysis", height=450)
         return fig
 
