@@ -31,7 +31,12 @@ def _check_rate_limit(provider):
         return True
     now = time.time()
     window_start = now - RATE_LIMIT_WINDOW
-    _remote_call_log[provider] = [t for t in _remote_call_log[provider] if t > window_start]
+    # Prune every provider (not just the caller), then drop fully-expired
+    # ones, so idle keys never accumulate.
+    for key in list(_remote_call_log):
+        _remote_call_log[key] = [t for t in _remote_call_log[key] if t > window_start]
+        if not _remote_call_log[key]:
+            del _remote_call_log[key]
     if len(_remote_call_log[provider]) >= RATE_LIMIT_CALLS:
         log.warning(f"Rate limit hit for {provider}: {len(_remote_call_log[provider])} calls in {RATE_LIMIT_WINDOW}s")
         return False

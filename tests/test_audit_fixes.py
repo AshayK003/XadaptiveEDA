@@ -107,3 +107,15 @@ def test_score_display_lists_adjustments():
     out = explain_recommendation(rec, {}, {'distribution': 0.5})
     text = "\n".join(out if isinstance(out, list) else [str(out)])
     assert 'diversity' in text
+
+
+def test_rate_log_evicts_idle_providers():
+    import time
+
+    from llm_adapter import RATE_LIMIT_WINDOW, _check_rate_limit, _remote_call_log
+    _remote_call_log.clear()
+    _remote_call_log['idle'] = [time.time() - RATE_LIMIT_WINDOW - 10]
+    _check_rate_limit('active')
+    assert 'idle' not in _remote_call_log
+    assert 'active' in _remote_call_log
+    _remote_call_log.clear()
