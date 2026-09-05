@@ -11,9 +11,7 @@ __pycache__/
 *.log
 *.db
 
-# Internal engineering artifacts — not for public repo
-AGENTS.md
-engineering_memory.md
+# Internal files — never committed
 internals/
 
 # Environment variables (API keys)
