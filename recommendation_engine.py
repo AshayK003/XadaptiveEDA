@@ -1,5 +1,5 @@
-import random
 import logging
+import random
 
 log = logging.getLogger('recommendation_engine')
 
@@ -222,17 +222,13 @@ class RecommendationEngine:
                     continue
                 boot_profile = dict(data_profile)
                 boot_profile[f'{atype}_cols_boot'] = boot_cols
-                if atype == 'distribution':
-                    boot_profile['numerical_cols'] = boot_cols
-                elif atype == 'correlation':
+                if atype == 'distribution' or atype == 'correlation':
                     boot_profile['numerical_cols'] = boot_cols
                 elif atype == 'categorical':
                     boot_profile['categorical_cols'] = boot_cols
                 elif atype == 'outliers':
                     boot_profile['has_outliers'] = {c: data_profile.get('has_outliers', {}).get(c, 0) for c in boot_cols}
-                elif atype == 'clustering':
-                    boot_profile['numerical_cols'] = boot_cols
-                elif atype == 'feature_importance':
+                elif atype == 'clustering' or atype == 'feature_importance':
                     boot_profile['numerical_cols'] = boot_cols
                 relevance = self._calculate_data_relevance(atype, boot_profile)
                 boot_score = rec['base_score'] * user_preferences.get(atype, 0.5) * relevance
@@ -253,14 +249,16 @@ class RecommendationEngine:
         if epsilon <= 0 or len(recommendations) <= 5:
             return recommendations
         if random.random() < epsilon:
-            top_five = set(id(r) for r in recommendations[:5])
+            top_five = {id(r) for r in recommendations[:5]}
             candidates = [r for r in recommendations[5:] if id(r) not in top_five]
             if candidates:
                 exploration_pick = random.choice(candidates)
                 exploration_pick['exploration'] = True
-                recommendations.remove(exploration_pick)
-                recommendations.insert(random.randint(0, 4), exploration_pick)
-                log.info(f"ε-greedy: swapped in {exploration_pick['type']} for exploration")
+                # Boost score instead of positional insert: the caller
+                # re-sorts by score, which used to wipe the exploration order.
+                top_score = recommendations[0]['score']
+                exploration_pick['score'] = max(exploration_pick['score'], top_score)
+                log.info(f"ε-greedy: boosted {exploration_pick['type']} for exploration")
         return recommendations
 
     def _score_column_interestingness(self, analysis_type, column, data_profile):
@@ -271,9 +269,11 @@ class RecommendationEngine:
         
         if analysis_type in ('distribution', 'outliers', 'correlation'):
             skew = abs(skewness.get(column, 0) or 0)
-            outlier_pct = has_outliers.get(column, 0)
+            outlier_pct = has_outliers.get(column, 0) or 0
             missing = missing_pct.get(column, 0)
-            score = skew * 0.6 + outlier_pct * 0.4
+            # outlier_pct is 0-100 scale; normalize to 0-1 like skew's range,
+            # or any column with >~2.5% outliers saturates at 1.0.
+            score = skew * 0.6 + (outlier_pct / 100) * 0.4
             score = min(score, 1.0)
             if missing > 50:
                 score *= 0.5
@@ -322,10 +322,7 @@ class RecommendationEngine:
         elif analysis_type == 'time_series':
             return len(data_profile['time_series_candidates']) > 0
         
-        elif analysis_type == 'clustering':
-            return len(data_profile.get('numerical_cols', [])) >= 2
-        
-        elif analysis_type == 'feature_importance':
+        elif analysis_type == 'clustering' or analysis_type == 'feature_importance':
             return len(data_profile.get('numerical_cols', [])) >= 2
         
         return False
@@ -418,10 +415,7 @@ class RecommendationEngine:
         return factors
 
     def _get_applicable_columns(self, analysis_type, data_profile):
-        if analysis_type == 'distribution':
-            return data_profile['numerical_cols']
-        
-        elif analysis_type == 'correlation':
+        if analysis_type == 'distribution' or analysis_type == 'correlation':
             return data_profile['numerical_cols']
         
         elif analysis_type == 'missing_values':
@@ -436,10 +430,7 @@ class RecommendationEngine:
         elif analysis_type == 'time_series':
             return data_profile['time_series_candidates']
         
-        elif analysis_type == 'clustering':
-            return data_profile.get('numerical_cols', [])
-        
-        elif analysis_type == 'feature_importance':
+        elif analysis_type == 'clustering' or analysis_type == 'feature_importance':
             return data_profile.get('numerical_cols', [])
         
         return []

@@ -33,10 +33,22 @@ def explain_recommendation(recommendation, data_profile, user_preferences, quali
             if quality_adj < 0.9:
                 reasons.append("Data quality concerns reduced this score (see Data Quality Report).")
         else:
-            reasons.append(f"Score = " + " x ".join(parts) + f" = **{score:.2f}**")
+            reasons.append("Score = " + " x ".join(parts) + f" = **{score:.2f}**")
     else:
         if score >= 0.5:
             reasons.append(f"Relevance score: {score:.2f} (scale 0-1).")
+    # The arithmetic above is the pre-adjustment subtotal: diversity,
+    # novelty, avoidance, affinity and exploration change the final score.
+    adjustments = []
+    for key, label in (("diversity_penalty", "diversity"), ("novelty_penalty", "novelty"),
+                       ("avoidance_penalty", "avoidance"), ("affinity_boost", "affinity")):
+        val = recommendation.get(key)
+        if val:
+            adjustments.append(f"× {val} ({label})")
+    if recommendation.get("exploration"):
+        adjustments.append("(exploration boosted)")
+    if adjustments:
+        reasons.append("Post adjustments: " + " ".join(adjustments))
 
     skewed_cols = {col: s for col, s in data_profile.get('skewness', {}).items()
                    if s is not None and abs(s) > 1}
@@ -145,7 +157,7 @@ def global_explanation_summary(data_profile, quality_report, interaction_history
         icon = "🟢" if qs >= 0.8 else ("🟡" if qs >= 0.5 else "🔴")
         lines.append(f"**Quality score:** {icon} {qs:.2f}")
 
-    explored = set(e['recommendation_type'] for e in interaction_history if e.get('recommendation_type'))
+    explored = {e['recommendation_type'] for e in interaction_history if e.get('recommendation_type')}
     if explored:
         lines.append(f"\n**Explored analysis types:** {', '.join(sorted(explored))}")
     else:

@@ -1,12 +1,14 @@
-import sys, io
+import io
+import sys
+
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
-from recommendation_engine import RecommendationEngine
-from insight_generator import global_explanation_summary
-from data_quality import QualityReport
-from data_processor import DataProcessor
 import pandas as pd
-import numpy as np
+
+from data_processor import DataProcessor
+from data_quality import QualityReport
+from insight_generator import global_explanation_summary
+from recommendation_engine import RecommendationEngine
 
 profile = {
     'shape': (100, 5),

@@ -1,9 +1,12 @@
-import sys, io
+import io
+import sys
+
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
-import pandas as pd
 import numpy as np
-from data_quality import cleanse, QualityReport, DataQualityPipeline
+import pandas as pd
+
+from data_quality import DataQualityPipeline, cleanse
 
 # ─── Test 1: Empty DataFrame ───
 print("=== Test 1: Empty DataFrame ===")

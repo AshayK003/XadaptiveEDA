@@ -1,8 +1,11 @@
-import pandas as pd
+import logging
 import os
 import warnings
-import logging
-from data_quality import cleanse as _cleanse, QualityReport
+
+import pandas as pd
+
+from data_quality import QualityReport
+from data_quality import cleanse as _cleanse
 
 log = logging.getLogger('data_processor')
 
@@ -67,7 +70,8 @@ class DataProcessor:
             if not df[col].isnull().all():  # Skip if all values are null
                 try:
                     skewness[col] = df[col].skew()
-                except Exception:
+                except (ValueError, TypeError) as e:
+                    log.debug("skew failed for %s: %s", col, e)
                     skewness[col] = None
         
         # Get unique counts for all columns
@@ -115,7 +119,7 @@ class DataProcessor:
                         pd.to_datetime(sample_val, format=date_format)
                         date_detected = True
                         break
-                    except Exception:
+                    except (ValueError, TypeError):
                         continue
             
             if date_detected or (any(x in sample_val.lower() for x in ['-', '/', ':']) and len(sample_val) >= 8):
@@ -127,8 +131,8 @@ class DataProcessor:
                         new_null_pct = convert_attempt.isnull().mean()
                         if new_null_pct - null_pct < 0.2:
                             time_series_candidates.append(col)
-                except Exception:
-                    pass
+                except (ValueError, TypeError) as e:
+                    log.debug("time-series probe failed for %s: %s", col, e)
         
         # Mean absolute pairwise correlation for numerical columns
         mean_pairwise_correlation = 0.0

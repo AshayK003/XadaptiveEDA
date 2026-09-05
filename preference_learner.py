@@ -1,15 +1,16 @@
 import json
 import os
+from typing import ClassVar
 
 import pandas as pd
 
-from constants import DEFAULT_PREFERENCES, ANALYSIS_GOALS, DECAY_HALF_LIFE_HOURS
+from constants import ANALYSIS_GOALS, DECAY_HALF_LIFE_HOURS, DEFAULT_PREFERENCES
 
 
 class PreferenceTracker:
     """Tracks user feedback and adjusts priority weights within [0.1, 1.0]."""
 
-    ADJUSTMENTS = {
+    ADJUSTMENTS: ClassVar[dict] = {
         'liked': 0.10,
         'disliked': -0.10,
         'explored': 0.05,
@@ -51,7 +52,7 @@ class PreferenceTracker:
 
     def set_preferences(self, preferences):
         if not isinstance(preferences, dict):
-            raise ValueError("Preferences must be a dictionary")
+            raise TypeError("Preferences must be a dictionary")
         required_keys = set(self.preference_weights.keys())
         provided_keys = set(preferences.keys())
         if not required_keys.issubset(provided_keys):
@@ -95,17 +96,25 @@ class PreferenceTracker:
         if not self.interaction_history:
             return
         now = pd.Timestamp.now()
+        # One decay per rec_type from its LATEST timestamp. The old loop
+        # decayed the same weight once per history entry, compounding N
+        # times and dragging everything back to 0.5.
+        latest: dict = {}
         for entry in self.interaction_history:
             if entry.get('action') == 'decay_applied':
                 continue
             ts = entry.get('timestamp')
             if ts is None:
                 continue
-            delta_hours = (now - pd.Timestamp(ts)).total_seconds() / 3600
+            rt = entry['recommendation_type']
+            ts = pd.Timestamp(ts)
+            if rt not in latest or ts > latest[rt]:
+                latest[rt] = ts
+        for rec_type, ts in latest.items():
+            delta_hours = (now - ts).total_seconds() / 3600
             if delta_hours <= 0:
                 continue
             decay_factor = 2 ** (-delta_hours / half_life_hours)
-            rec_type = entry['recommendation_type']
             if rec_type in self.preference_weights:
                 current = self.preference_weights[rec_type]
                 self.preference_weights[rec_type] = max(0.1, min(1.0, 0.5 + (current - 0.5) * decay_factor))

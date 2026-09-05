@@ -1,10 +1,14 @@
-import sys, io, os, json, tempfile
+import io
+import json
+import os
+import sys
+import tempfile
+
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
 import pandas as pd
 
 from preference_learner import PreferenceTracker
-from constants import ANALYSIS_GOALS, DEFAULT_PREFERENCES
 
 # ─── Test 1: Goal setting ───
 print("=== Test 1: Goal Setting ===")

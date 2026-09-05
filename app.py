@@ -1,21 +1,26 @@
-import streamlit as st
-import pandas as pd
-import plotly.express as px
+import logging
 import os
 import sys
 import time
-import logging
 import uuid
 
-from data_processor import DataProcessor
-from recommendation_engine import RecommendationEngine
-from preference_learner import PreferenceTracker
-from visualization_generator import VisualizationGenerator
-from insight_generator import explain_recommendation, compare_recommendations, global_explanation_summary
-from constants import DEFAULT_PREFERENCES, ANALYSIS_GOALS
-from data_quality import QualityReport
+import pandas as pd
+import plotly.express as px
+import streamlit as st
+
 import llm_adapter
 import session_persistence as sp
+from constants import ANALYSIS_GOALS, DEFAULT_PREFERENCES
+from data_processor import DataProcessor
+from data_quality import QualityReport
+from insight_generator import (
+    compare_recommendations,
+    explain_recommendation,
+    global_explanation_summary,
+)
+from preference_learner import PreferenceTracker
+from recommendation_engine import RecommendationEngine
+from visualization_generator import VisualizationGenerator
 
 logging.basicConfig(level=logging.INFO, format='%(levelname)s | %(name)s | %(message)s')
 log = logging.getLogger('app')
@@ -138,7 +143,8 @@ with st.sidebar:
         file_details = {"Filename": uploaded_file.name, "File size": f"{uploaded_file.size / 1024:.1f} KB"}
         st.write("File Details:", file_details)
         if uploaded_file.size > 50 * 1024 * 1024:
-            st.warning("Large file (>50 MB) — processing may be slow or fail.")
+            st.error("File over 50 MB — upload a smaller file.")
+            st.stop()
     
     st.header("Your Priorities")
     
@@ -207,7 +213,7 @@ with st.sidebar:
         )
         fig.update_traces(texttemplate='%{text:.1f}', textposition='outside')
         fig.update_layout(
-            showlegend=False, margin=dict(l=0, r=0, t=0, b=0),
+            showlegend=False, margin={"l": 0, "r": 0, "t": 0, "b": 0},
             xaxis_visible=False, yaxis_title=None
         )
         st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
@@ -398,7 +404,8 @@ if uploaded_file is not None:
             progress.progress(100, text="Done")
             progress.empty()
         except Exception as e:
-            st.error(f"Could not process **{uploaded_file.name}**: {str(e)}")
+            log.exception("dataset processing failed")
+            st.error(f"Could not process **{uploaded_file.name}**: {e!s}")
             with st.expander("Technical details"):
                 st.code(
                     f"Error type: {type(e).__name__}\n"
@@ -464,12 +471,11 @@ if uploaded_file is not None:
                 if new_name and new_name != col:
                     rename_map[col] = new_name
 
-        if rename_map:
-            if st.button("Apply Column Renames"):
-                df.rename(columns=rename_map, inplace=True)
-                st.session_state.df = df
-                st.session_state._cols_renamed = True
-                st.rerun()
+        if rename_map and st.button("Apply Column Renames"):
+            df.rename(columns=rename_map, inplace=True)
+            st.session_state.df = df
+            st.session_state._cols_renamed = True
+            st.rerun()
     elif not unnamed_cols and '_cols_renamed' not in st.session_state:
         st.session_state._cols_renamed = True
         st.rerun()
@@ -479,13 +485,12 @@ if uploaded_file is not None:
         with st.expander("Data Preview", expanded=True):
             st.dataframe(df.head(10), use_container_width=True)
         drop_rows = st.number_input("Drop first N rows (optional)", min_value=0, max_value=len(df)-1, value=0, step=1, key="_drop_rows")
-        if drop_rows > 0:
-            if st.button(f"Remove first {drop_rows} row(s)"):
-                df.drop(index=df.index[:drop_rows], inplace=True)
-                df.reset_index(drop=True, inplace=True)
-                st.session_state.df = df
-                st.session_state._rows_dropped = drop_rows
-                st.rerun()
+        if drop_rows > 0 and st.button(f"Remove first {drop_rows} row(s)"):
+            df.drop(index=df.index[:drop_rows], inplace=True)
+            df.reset_index(drop=True, inplace=True)
+            st.session_state.df = df
+            st.session_state._rows_dropped = drop_rows
+            st.rerun()
 
     # Finalize: update all analytics and clear AI cache
     if '_cols_renamed' in st.session_state and '_finalized' not in st.session_state:
@@ -531,6 +536,10 @@ if uploaded_file is not None:
                     st.markdown(msg["content"])
             chat_input = st.chat_input("Ask a question about your dataset...", key="_data_chat")
             if chat_input:
+                if len(chat_input) > 2000:
+                    st.warning("Question truncated to 2000 characters.")
+                    chat_input = chat_input[:2000]
+                st.session_state._chat_history = st.session_state._chat_history[-19:]
                 st.session_state._chat_history.append({"role": "user", "content": chat_input})
                 provider = st.session_state.get('_ai_provider', 'local')
                 model = st.session_state.get('_llm_model', llm_adapter.DEFAULT_MODEL)
@@ -546,6 +555,7 @@ if uploaded_file is not None:
                     st.session_state._chat_history.append({"role": "assistant", "content": result["text"]})
                 else:
                     st.session_state._chat_history.append({"role": "assistant", "content": f"⚠️ {result.get('error', 'LLM unavailable')}"})
+                st.session_state._chat_history = st.session_state._chat_history[-20:]
                 st.rerun()
         
         # ── Global Exploration Summary ─────────────────────────
@@ -797,9 +807,9 @@ if uploaded_file is not None:
                     selected_viz_type = None
                     if visualization_options:
                         selected_viz_type = st.selectbox(
-                            f"Select visualization type:",
+                            "Select visualization type:",
                             options=list(visualization_options.keys()),
-                            format_func=lambda x: visualization_options[x]
+                            format_func=lambda x, _o=visualization_options: _o[x]
                         )
                     
                     # Generate and show visualization
@@ -835,18 +845,18 @@ if uploaded_file is not None:
                                 if not flagged.empty:
                                     flagged['_outlier_col'] = col
                                     flagged['_direction'] = flagged[col].apply(
-                                        lambda v: f"+{v - upper:.2f}" if v > upper else f"{v - lower:.2f}"
+                                        lambda v, _u=upper, _l=lower: f"+{v - _u:.2f}" if v > _u else f"{v - _l:.2f}"
                                     )
                                     outlier_rows = pd.concat([outlier_rows, flagged])
-                            if not outlier_rows.empty:
-                                if st.checkbox("Show outlier rows", key=f"_outlier_rows_{i}"):
-                                    st.dataframe(
-                                        outlier_rows.drop_duplicates().reset_index(drop=True),
-                                        use_container_width=True,
-                                        column_order=[c for c in outlier_rows.columns if not c.startswith('_')] + ['_outlier_col', '_direction']
-                                    )
+                            if not outlier_rows.empty and st.checkbox("Show outlier rows", key=f"_outlier_rows_{i}"):
+                                st.dataframe(
+                                    outlier_rows.drop_duplicates().reset_index(drop=True),
+                                    use_container_width=True,
+                                    column_order=[c for c in outlier_rows.columns if not c.startswith('_')] + ['_outlier_col', '_direction']
+                                )
                     except Exception as e:
-                        viz_placeholder.error(f"Error generating visualization: {str(e)}")
+                        log.exception("visualization failed")
+                        viz_placeholder.error(f"Error generating visualization: {e!s}")
             
             if st.session_state.get('ai_enabled'):
                 st.markdown("**AI Analysis**")

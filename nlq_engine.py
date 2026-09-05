@@ -4,8 +4,8 @@ Tokenizes, stems, expands synonyms, scores by token overlap,
 and optionally extracts column names from queries.
 """
 
-import re
 import math
+import re
 
 # ── Stemmer (rule-based, no deps) ─────────────────────────────
 
@@ -29,7 +29,7 @@ _STEMS = {
 _SUFFIX_RULES = [
     (r'ies$', 'y'), (r'ves$', 'f'), (r'ing$', ''),
     (r'ions$', 'ion'), (r'ion$', 'ion'), (r'ed$', ''),
-    (r'ly$', ''), (r's$', ''), (r'es$', ''),
+    (r'ly$', ''), (r'es$', ''), (r's$', ''),
 ]
 
 
@@ -158,7 +158,6 @@ def _tf_weight(tokens):
     freq = {}
     for t in tokens:
         freq[t] = freq.get(t, 0) + 1
-    n = len(tokens)
     return {t: 1 + math.log10(c) if c > 0 else 0 for t, c in freq.items()}
 
 
@@ -213,9 +212,8 @@ def match_query(query, columns=None):
                 score += w * 2.0
             # bonus for especially distinctive words
             if t in ('correlation', 'histogram', 'outlier',
-                     'anomaly', 'distribution', 'categorical'):
-                if t in syn_set & keywords:
-                    score += w * 1.5
+                     'anomaly', 'distribution', 'categorical') and t in syn_set & keywords:
+                score += w * 1.5
         scores[atype] = score / max(total_weight, 1)
 
     # Negation dampening — only dampen types mentioned near negation tokens

@@ -9,7 +9,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![Streamlit](https://img.shields.io/badge/Streamlit-≥1.36-FF4B4B.svg)](https://streamlit.io/)
-[![Tests](https://img.shields.io/badge/tests-53%20passing-brightgreen.svg)](#testing)
+[![Tests](https://img.shields.io/badge/tests-18%20passing-brightgreen.svg)](#testing)
 [![pandas](https://img.shields.io/badge/pandas-≥1.5-15045D.svg)](https://pandas.pydata.org/)
 [![GitHub Stars](https://img.shields.io/github/stars/AshayK003/XadaptiveEDA?logo=github)](https://github.com/AshayK003/XadaptiveEDA)
 
@@ -266,13 +266,14 @@ x-adaptive-eda/
 ├── .env.example              # Environment variable template
 ├── LICENSE                   # MIT License
 ├── README.md                 # This file
-├── test_phase1.py            # Core tests (diversity, tracking, explanations)
-├── test_phase2.py            # Column interestingness, sampling, summary
-├── test_phase3.py            # Goals, decay, save/load
-├── test_phase4.py            # NLQ classifier (stemming, synonyms, TF)
-├── test_data_quality.py      # 12 quality pipeline tests
-├── test_session_persistence.py # SQLite persistence tests
-└── test_rate_limit.py        # Rate limiting tests
+├── test_phase1.py            # Legacy smoke scripts (run via tests/)
+├── test_phase2.py            # (kept for manual runs; CI uses tests/)
+├── test_phase3.py            #
+├── test_phase4.py            #
+├── test_data_quality.py      #
+├── test_session_persistence.py #
+├── test_rate_limit.py        #
+├── tests/                    # Real pytest suite (smoke + regression)
 ```
 
 ---
@@ -302,21 +303,19 @@ streamlit run app.py
 
 ## Testing
 
-**68 tests** across 7 test files:
+**18 pytest tests** in `tests/` (plus the 7 legacy scripts they execute):
 
 | File | Tests | Coverage |
 |------|-------|----------|
-| test_phase1.py | 5 | Diversity, tracking, explanations, regression |
-| test_phase2.py | 5 | Column interestingness, sampling, summary |
-| test_phase3.py | 7 | Goals, decay, save/load round-trip |
-| test_phase4.py | 12 | NLQ classifier (stemming, synonyms, TF scoring) |
-| test_data_quality.py | 12 | 10-step quality pipeline |
-| test_session_persistence.py | 7 | SQLite save/load/list/delete |
-| test_rate_limit.py | 5 | Rate limiting (local, remote, separate providers) |
+| tests/test_smoke_scripts.py | 8 | Every legacy script exits 0 |
+| tests/test_audit_fixes.py | 10 | Outlier scale, epsilon boost, dedup, decay, kmeans, heatmap, stemmer, endpoint guard, error redaction, score display |
+
+Legacy print-scripts (`test_phase*.py`, etc.) are kept for manual runs;
+CI executes the real suite:
 
 ```bash
-# Run all tests
-python test_phase1.py && python test_phase2.py && python test_phase3.py && python test_phase4.py && python test_data_quality.py && python test_session_persistence.py && python test_rate_limit.py
+# Run the suite
+python -m pytest tests/ -q
 ```
 
 ---

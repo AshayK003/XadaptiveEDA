@@ -1,5 +1,5 @@
-import pandas as pd
 import numpy as np
+import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
@@ -68,11 +68,11 @@ class VisualizationGenerator:
             fig.add_annotation(
                 text="[Quality warning] " + "; ".join(warnings),
                 xref="paper", yref="paper", x=0.5, y=-0.15,
-                showarrow=False, font=dict(color="orange", size=11),
+                showarrow=False, font={"color": "orange", "size": 11},
                 bgcolor="rgba(255,255,255,0.8)"
             )
             # Make room for the annotation
-            fig.update_layout(margin=dict(b=60))
+            fig.update_layout(margin={"b": 60})
 
     def _create_distribution_plot(self, df, columns, **kwargs):
         if not columns:
@@ -130,7 +130,7 @@ class VisualizationGenerator:
             return fig
 
         corr = num_df.corr(method=method)
-        mask = np.triu(np.ones_like(corr, dtype=bool))
+        mask = np.triu(np.ones_like(corr, dtype=bool), k=1)
         tri = corr.copy()
         tri[mask] = np.nan
 
@@ -270,14 +270,16 @@ class VisualizationGenerator:
             fig.add_annotation(text="No numerical columns to plot against time", xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False)
             return fig
 
-        numeric_col = numeric_cols[0]
+        numeric_col = kwargs.get("value_col")
+        if numeric_col not in list(numeric_cols):
+            numeric_col = numeric_cols[0]
         for col in columns:
             try:
                 ts = pd.to_datetime(df[col], errors='coerce') if not pd.api.types.is_datetime64_any_dtype(df[col]) else df[col]
                 tmp = pd.DataFrame({'time': ts, 'value': df[numeric_col]}).dropna().sort_values('time')
                 if not tmp.empty:
                     fig.add_trace(go.Scatter(x=tmp['time'], y=tmp['value'], mode='lines+markers', name=f"{numeric_col} over {col}"))
-            except Exception:
+            except (ValueError, TypeError, KeyError):
                 continue
 
         if fig.data:
@@ -289,11 +291,17 @@ class VisualizationGenerator:
 
     def _kmeans(self, data, k, max_iter=100, random_state=42):
         rng = np.random.default_rng(random_state)
-        centroids = data.iloc[rng.choice(len(data), k, replace=False)].values
+        k = max(1, min(int(k), len(data)))
+        centroids = data.iloc[rng.choice(len(data), k, replace=False)].values.astype(float)
         for _ in range(max_iter):
             distances = np.linalg.norm(data.values[:, None] - centroids[None, :], axis=2)
             labels = np.argmin(distances, axis=1)
-            new_centroids = np.array([data.values[labels == i].mean(axis=0) for i in range(k)])
+            rebuilt = []
+            for i in range(k):
+                pts = data.values[labels == i]
+                # Empty cluster: reseed at a random point instead of NaN-poisoning.
+                rebuilt.append(pts.mean(axis=0) if len(pts) else data.values[rng.integers(len(data))])
+            new_centroids = np.array(rebuilt)
             if np.allclose(centroids, new_centroids):
                 break
             centroids = new_centroids
@@ -310,7 +318,7 @@ class VisualizationGenerator:
         dims = num_df.shape[1]
         if dims >= 3:
             centered = num_df.values - num_df.values.mean(axis=0)
-            u, s, vt = np.linalg.svd(centered, full_matrices=False)
+            u, s, _vt = np.linalg.svd(centered, full_matrices=False)
             coords = u[:, :2] * s[:2]
             x, y = coords[:, 0], coords[:, 1]
             xlabel, ylabel = "PC1", "PC2"
@@ -321,7 +329,7 @@ class VisualizationGenerator:
             mask = labels == c
             fig.add_trace(go.Scatter(
                 x=x[mask], y=y[mask], mode='markers',
-                name=f"Cluster {c+1}", marker=dict(size=6)
+                name=f"Cluster {c+1}", marker={"size": 6}
             ))
         fig.update_layout(title="K-Means Clustering", xaxis_title=xlabel, yaxis_title=ylabel, height=450)
         return fig

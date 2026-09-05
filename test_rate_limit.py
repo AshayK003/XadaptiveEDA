@@ -1,7 +1,14 @@
-import sys, io, time
+import io
+import sys
+
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
-from llm_adapter import _check_rate_limit, _remote_call_log, RATE_LIMIT_CALLS, RATE_LIMIT_WINDOW
+from llm_adapter import (
+    RATE_LIMIT_CALLS,
+    RATE_LIMIT_WINDOW,
+    _check_rate_limit,
+    _remote_call_log,
+)
 
 # ─── Test 1: Local provider always allowed ───
 print("=== Test 1: Local Provider Unrestricted ===")

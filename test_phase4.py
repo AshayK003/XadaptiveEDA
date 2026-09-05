@@ -1,7 +1,9 @@
-import sys, io
+import io
+import sys
+
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
-from nlq_engine import match_query, format_result
+from nlq_engine import format_result, match_query
 
 # ─── Test 1: Basic keyword matches ───
 print("=== Test 1: Keyword Matches ===")

@@ -1,7 +1,6 @@
 import json
-import sqlite3
 import os
-
+import sqlite3
 
 DB_PATH = os.path.expanduser("~/.eda_assistant_sessions.db")
 

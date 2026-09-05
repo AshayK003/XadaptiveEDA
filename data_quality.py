@@ -5,11 +5,11 @@ Inserts between load_data() and profile_dataset() to normalize,
 validate, and report on data quality without changing existing interfaces.
 """
 
-import pandas as pd
-import numpy as np
 import re
 from dataclasses import dataclass, field
 
+import numpy as np
+import pandas as pd
 
 # ── Configuration ─────────────────────────────────────────────
 
@@ -154,11 +154,19 @@ class DataQualityPipeline:
 
     def _normalize_column_names(self, df: pd.DataFrame) -> pd.DataFrame:
         new_cols: list[str] = []
+        used: set[str] = set()
         for col in df.columns:
             new = str(col).strip().lower().replace(" ", "_")
             new = re.sub(r'[^\w]', '_', new)
-            new = re.sub(r'_+', '_', new).strip('_')
-            new_cols.append(new if new else "column")
+            new = re.sub(r'_+', '_', new).strip('_') or "column"
+            # Collision-proof: "A B"/"A-B"/"a_b" must not share one label.
+            # Loop until unique so a real "col_1" never collides either.
+            base, cand, i = new, new, 0
+            while cand in used:
+                i += 1
+                cand = f"{base}_{i}"
+            used.add(cand)
+            new_cols.append(cand)
         df.columns = new_cols
         return df
 
@@ -174,7 +182,7 @@ class DataQualityPipeline:
             non_null = df[col].dropna()
             if non_null.empty:
                 continue
-            types = set(type(v).__name__ for v in non_null.head(TYPE_INFERENCE_SAMPLE))
+            types = {type(v).__name__ for v in non_null.head(TYPE_INFERENCE_SAMPLE)}
             if len(types) > 1:
                 mixed.append(col)
         return mixed
@@ -207,7 +215,7 @@ class DataQualityPipeline:
                     parsed = pd.to_datetime(df[col], errors='coerce', dayfirst=True)
                     if parsed.notna().mean() > 0.8:
                         df[col] = parsed
-                except Exception:
+                except (ValueError, TypeError):
                     pass
 
         return df

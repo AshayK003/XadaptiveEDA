@@ -1,14 +1,15 @@
-import sys, io
+import io
+import sys
+
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
-from recommendation_engine import RecommendationEngine
-from preference_learner import PreferenceTracker
-from insight_generator import explain_recommendation, compare_recommendations
-from data_quality import QualityReport, cleanse
+
 from data_processor import DataProcessor
+from data_quality import QualityReport
+from insight_generator import compare_recommendations, explain_recommendation
+from preference_learner import PreferenceTracker
+from recommendation_engine import RecommendationEngine
 from visualization_generator import VisualizationGenerator
-import pandas as pd
-import numpy as np
 
 profile = {
     'shape': (100, 5),
@@ -41,7 +42,7 @@ num_types = [r['type'] for r in recs]
 dist_idx = next((i for i, t in enumerate(num_types) if t == 'distribution'), -1)
 out_idx = next((i for i, t in enumerate(num_types) if t == 'outliers'), -1)
 if dist_idx >= 0 and out_idx >= 0:
-    assert recs[max(dist_idx, out_idx)].get('diversity_penalty') == 0.85, f"Second numerical rec should be penalized"
+    assert recs[max(dist_idx, out_idx)].get('diversity_penalty') == 0.85, "Second numerical rec should be penalized"
     print("  Numerical duplication correctly penalized.")
 print("  Passed!")
 
@@ -71,7 +72,7 @@ assert 'Your priority' in comparison
 assert 'Final score' in comparison
 assert recs[0]['title'] in comparison
 assert recs[1]['title'] in comparison
-print(f"  Comparison contains: Base score, Data relevance, Priority, Final score")
+print("  Comparison contains: Base score, Data relevance, Priority, Final score")
 print("  Passed!")
 
 # ─── Test 4: Existing functionality not broken ───
@@ -79,7 +80,9 @@ print("\n=== Test 4: Regression Checks ===")
 
 # 4a: DataProcessor.cleanse still works
 dp = DataProcessor()
-import tempfile, os
+import os
+import tempfile
+
 with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False) as f:
     f.write('NA,name\n1,alice\nN/A,bob\n')
     tmp = f.name

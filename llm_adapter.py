@@ -1,10 +1,13 @@
 import json
-import time
-import urllib.request
-import urllib.error
-import pandas as pd
 import logging
+import re
+import time
+import urllib.error
+import urllib.request
 from collections import defaultdict
+from urllib.parse import urlparse
+
+import pandas as pd
 
 log = logging.getLogger('llm_adapter')
 
@@ -30,12 +33,34 @@ def _check_rate_limit(provider):
     window_start = now - RATE_LIMIT_WINDOW
     _remote_call_log[provider] = [t for t in _remote_call_log[provider] if t > window_start]
     if len(_remote_call_log[provider]) >= RATE_LIMIT_CALLS:
-        oldest = _remote_call_log[provider][0]
-        retry_after = int(RATE_LIMIT_WINDOW - (now - oldest))
         log.warning(f"Rate limit hit for {provider}: {len(_remote_call_log[provider])} calls in {RATE_LIMIT_WINDOW}s")
         return False
     _remote_call_log[provider].append(now)
     return True
+
+
+def _safe_error(e, prefix="Request failed"):
+    """Log the full error server-side; return a redacted user-facing string."""
+    log.debug("%s: %s", prefix, e)
+    text = re.sub(r"(sk-|sk-or-|gsk_|xox-|Bearer )[A-Za-z0-9\-_.~+/=]+", r"\1***", str(e))
+    return f"{prefix} ({type(e).__name__}: {text[:200]})"
+
+
+def is_safe_endpoint(url):
+    """User-typed custom LLM endpoints: http(s) only, never the cloud
+    metadata address. Localhost/private hosts stay allowed — local
+    Ollama/LM Studio servers are the primary use case."""
+    try:
+        parts = urlparse(url or "")
+    except ValueError:
+        return False
+    if parts.scheme not in ("http", "https"):
+        return False
+    host = (parts.hostname or "").lower()
+    if not host:
+        return False
+    return host != "169.254.169.254"
+
 
 def _urlopen_retry(req, timeout):
     last_err = None
@@ -125,7 +150,7 @@ def _build_context(profile, df, analysis_type, columns):
                             strong.append(f"{corr.columns[i]} vs {corr.columns[j]} (r={r:.2f})")
                 if strong:
                     lines.append(f"Strong correlations: {'; '.join(strong)}")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - UI boundary, logged + redacted
             log.debug(f"Correlation context skipped: {e}")
     lines.append(f"\nAnalysis type: {analysis_type.replace('_', ' ')}")
     lines.append(f"Selected columns: {', '.join(columns)}")
@@ -145,8 +170,8 @@ def _build_context(profile, df, analysis_type, columns):
                 if not vc.empty:
                     summary_lines.append(f"  {col}: top value '{vc.index[0]}' ({vc.iloc[0]}/{len(sample)} rows)")
         if summary_lines:
-            lines.append(f"\nSample column summary:\n" + "\n".join(summary_lines))
-    except Exception as e:
+            lines.append("\nSample column summary:\n" + "\n".join(summary_lines))
+    except Exception as e:  # noqa: BLE001 - UI boundary, logged + redacted
         log.debug(f"Sample summary skipped: {e}")
 
     return "\n".join(lines)
@@ -208,8 +233,8 @@ def check_ollama(host=DEFAULT_HOST, port=DEFAULT_PORT):
             data = json.loads(resp.read())
             models = [m["name"] for m in data.get("models", [])]
             return {"ok": True, "models": models}
-    except Exception as e:
-        return {"ok": False, "error": str(e)}
+    except Exception as e:  # noqa: BLE001 - UI boundary, logged + redacted
+        return {"ok": False, "error": _safe_error(e)}
 
 
 def pick_model(models, preferred=DEFAULT_MODEL):
@@ -256,8 +281,8 @@ def generate_analysis_local(profile, df, analysis_type, columns,
         return {"ok": False, "error": msg}
     except urllib.error.URLError:
         return {"ok": False, "error": "Ollama not reachable — is it running?"}
-    except Exception as e:
-        return {"ok": False, "error": str(e)}
+    except Exception as e:  # noqa: BLE001 - UI boundary, logged + redacted
+        return {"ok": False, "error": _safe_error(e)}
 
 
 # ── Remote API (OpenAI-compatible) ───────────────────────────
@@ -286,6 +311,8 @@ def generate_analysis_remote(profile, df, analysis_type, columns,
     }).encode()
 
     try:
+        if not is_safe_endpoint(endpoint):
+            return {"ok": False, "error": "Unsafe endpoint URL (http/https only, no metadata addresses)."}
         req = urllib.request.Request(endpoint, data=payload, method="POST")
         req.add_header("Content-Type", "application/json")
         req.add_header("Authorization", f"Bearer {api_key}")
@@ -305,8 +332,8 @@ def generate_analysis_remote(profile, df, analysis_type, columns,
         return {"ok": False, "error": msg}
     except urllib.error.URLError:
         return {"ok": False, "error": "API not reachable — check your internet connection"}
-    except Exception as e:
-        return {"ok": False, "error": str(e)}
+    except Exception as e:  # noqa: BLE001 - UI boundary, logged + redacted
+        return {"ok": False, "error": _safe_error(e)}
 
 
 # ── Column naming assistant ──────────────────────────────────
@@ -362,9 +389,9 @@ def suggest_column_names(df, unnamed_cols, model=DEFAULT_MODEL, provider="local"
             with _urlopen_retry(req, LOCAL_TIMEOUT) as resp:
                 result = json.loads(resp.read())
                 text = result.get("response", "").strip()
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - UI boundary, logged + redacted
             log.warning(f"Column naming local failed: {e}")
-            return {"ok": False, "error": str(e)}
+            return {"ok": False, "error": _safe_error(e)}
     else:
         if not _check_rate_limit(endpoint):
             return {"ok": False, "error": f"Rate limit exceeded ({RATE_LIMIT_CALLS} calls/{RATE_LIMIT_WINDOW}s). Wait and retry."}
@@ -378,14 +405,16 @@ def suggest_column_names(df, unnamed_cols, model=DEFAULT_MODEL, provider="local"
             "temperature": 0.2
         }).encode()
         try:
+            if not is_safe_endpoint(endpoint):
+                return {"ok": False, "error": "Unsafe endpoint URL (http/https only, no metadata addresses)."}
             req = urllib.request.Request(endpoint, data=payload, method="POST")
             req.add_header("Content-Type", "application/json")
             req.add_header("Authorization", f"Bearer {api_key}")
             with _urlopen_retry(req, TIMEOUT) as resp:
                 result = json.loads(resp.read())
                 text = result["choices"][0]["message"]["content"].strip()
-        except Exception as e:
-            return {"ok": False, "error": str(e)}
+        except Exception as e:  # noqa: BLE001 - UI boundary, logged + redacted
+            return {"ok": False, "error": _safe_error(e)}
 
     names = {}
     for line in text.split("\n"):
@@ -477,7 +506,7 @@ def _build_dataset_context(data_profile, df):
     try:
         sample = df.head(3)
         parts.append(f"First 3 rows:\n{sample.to_string(index=False)}\n")
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - UI boundary, logged + redacted
         log.debug(f"Sample rows skipped: {e}")
 
     return "\n".join(parts)
@@ -531,8 +560,8 @@ def chat_with_data(query, data_profile, df, conversation_history=None,
                 return {"ok": True, "text": result.get("response", "").strip()}
         except urllib.error.URLError:
             return {"ok": False, "error": "Ollama not reachable — is it running?"}
-        except Exception as e:
-            return {"ok": False, "error": str(e)}
+        except Exception as e:  # noqa: BLE001 - UI boundary, logged + redacted
+            return {"ok": False, "error": _safe_error(e)}
     else:
         if not _check_rate_limit(endpoint):
             return {"ok": False, "error": f"Rate limit exceeded ({RATE_LIMIT_CALLS} calls/{RATE_LIMIT_WINDOW}s). Wait and retry."}
@@ -543,6 +572,8 @@ def chat_with_data(query, data_profile, df, conversation_history=None,
             "temperature": 0.3
         }).encode()
         try:
+            if not is_safe_endpoint(endpoint):
+                return {"ok": False, "error": "Unsafe endpoint URL (http/https only, no metadata addresses)."}
             req = urllib.request.Request(endpoint, data=payload, method="POST")
             req.add_header("Content-Type", "application/json")
             req.add_header("Authorization", f"Bearer {api_key}")
@@ -560,5 +591,5 @@ def chat_with_data(query, data_profile, df, conversation_history=None,
             return {"ok": False, "error": msg}
         except urllib.error.URLError:
             return {"ok": False, "error": "API not reachable"}
-        except Exception as e:
-            return {"ok": False, "error": str(e)}
+        except Exception as e:  # noqa: BLE001 - UI boundary, logged + redacted
+            return {"ok": False, "error": _safe_error(e)}
